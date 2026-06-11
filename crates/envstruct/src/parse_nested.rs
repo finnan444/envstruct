@@ -1,5 +1,5 @@
 use crate::*;
-use paste::paste;
+use pastey::paste;
 
 /// Trait for parsing nested environment variables.
 pub trait EnvParseNested {

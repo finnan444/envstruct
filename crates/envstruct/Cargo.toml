@@ -11,12 +11,30 @@ license = { workspace = true }
 repository = { workspace = true }
 version = { workspace = true }
 
+[features]
+default = [
+    "bytesize",
+    "chrono",
+    "humantime",
+    "regex",
+    "serde_json",
+    "url",
+    "env_uppercase",
+]
+bytesize = ["dep:bytesize"]
+chrono = ["dep:chrono"]
+humantime = ["dep:humantime"]
+regex = ["dep:regex"]
+serde_json = ["dep:serde_json", "dep:serde"]
+url = ["dep:url"]
+env_uppercase = []
+
 [dependencies]
-bytesize = { version = "1", optional = true }
+bytesize = { version = "2", optional = true }
 chrono = { version = "0.4", optional = true }
 envstruct_derive = { path = "../envstruct_derive", version = "1.0" }
 humantime = { version = "2", optional = true }
-paste = "1.0.15"
+pastey = "0.2"
 prettytable-rs = "0.10"
 regex = { version = "1", optional = true }
 serde = { version = "1", optional = true }
@@ -26,27 +44,9 @@ url = { version = "2", optional = true }
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }
-serial_test = "3.2.0"
-strum = { version = "0.26", features = ["derive"] }
-trybuild = "1.0.103"
-
-[features]
-default = [
-	"bytesize",
-	"chrono",
-	"humantime",
-	"regex",
-	"serde_json",
-	"url",
-	"env_uppercase",
-]
-bytesize = ["dep:bytesize"]
-chrono = ["dep:chrono"]
-humantime = ["dep:humantime"]
-regex = ["dep:regex"]
-serde_json = ["dep:serde_json", "dep:serde"]
-url = ["dep:url"]
-env_uppercase = []
+serial_test = "3.5.0"
+strum = { version = "0.28", features = ["derive"] }
+trybuild = "1.0.116"
 
 [[example]]
 name = "usage"

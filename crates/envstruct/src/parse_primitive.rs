@@ -1,5 +1,5 @@
 use crate::*;
-use paste::paste;
+use pastey::paste;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// A trait for parsing environment variables into primitive types.
