@@ -192,8 +192,8 @@ fn empty_default_differs_from_missing_default() {
     let usage = Config::usage_with_prefix("TEST").unwrap();
     assert!(usage.contains(r#"| """#));
     assert!(usage.contains("none"));
-    assert!(!field_wrap_lines(&usage, "TEST_EMPTY")[0].contains('—'));
-    assert!(!field_wrap_lines(&usage, "TEST_MISSING")[0].contains('—'));
+    assert!(!field_wrap_lines(&usage, "TEST_EMPTY")[0].contains("required"));
+    assert!(!field_wrap_lines(&usage, "TEST_MISSING")[0].contains("required"));
 
     clean_env();
     let config = Config::with_prefix("TEST").unwrap();
@@ -699,8 +699,6 @@ fn usage_snapshot_groups_and_conditions() {
         &usage,
         r#"Environment variables
 
-—: must be set.
-none: optional, unset by default.
 Byte sizes accept values such as 4MB and 10MiB.
 
 VARIABLE                                | TYPE                   | DEFAULT
@@ -710,10 +708,10 @@ AVATARDB_IMAGE_WIDTH                    | u32                    | "150"
 AVATARDB_NSFW_SCORE_MAX                 | f64                    | "0.9"
 AVATARDB_MODE                           | enum: gcs, local, mock | "gcs"
 [used when AVATARDB_MODE=gcs (default)]
-  AVATARDB_BUCKET_NAME                  | string                 | —
+  AVATARDB_BUCKET_NAME                  | string                 | required
   AVATARDB_DIGEST_SALT                  | string                 | "squibblefluff"
 [used when AVATARDB_MODE=local]
-  AVATARDB_LOCAL_DATA_DIR               | string                 | —
+  AVATARDB_LOCAL_DATA_DIR               | string                 | required
 "#,
     );
 }
@@ -1073,7 +1071,7 @@ fn default_note_is_shown_in_parentheses_and_does_not_parse() {
 
 #[test]
 #[serial]
-fn optional_without_default_prints_none_required_prints_em_dash() {
+fn optional_and_required_defaults_are_readable_without_a_legend() {
     #[derive(EnvStruct, Debug)]
     pub struct Config {
         pub dsn: String,
@@ -1081,7 +1079,8 @@ fn optional_without_default_prints_none_required_prints_em_dash() {
     }
 
     let usage = Config::usage_with_prefix("APP").unwrap();
-    assert!(usage.contains("—: must be set.\nnone: optional, unset by default."));
+    assert!(!usage.contains("must be set."));
+    assert!(!usage.contains("optional, unset by default."));
     let header = usage
         .lines()
         .find(|line| line.starts_with("VARIABLE"))
@@ -1098,19 +1097,8 @@ fn optional_without_default_prints_none_required_prints_em_dash() {
         .lines()
         .find(|line| line.starts_with("APP_APP_NAME"))
         .expect("app_name row");
-    assert!(dsn.contains('—'), "required DEFAULT should be —:\n{dsn}");
-    assert!(
-        !dsn.contains("none"),
-        "required DEFAULT must not be none:\n{dsn}"
-    );
-    assert!(
-        app_name.contains("none"),
-        "optional DEFAULT should be none:\n{app_name}"
-    );
-    assert!(
-        !app_name.contains('—'),
-        "optional DEFAULT must not be —:\n{app_name}"
-    );
+    assert_eq!(dsn.split(" | ").nth(2).unwrap().trim(), "required");
+    assert_eq!(app_name.split(" | ").nth(2).unwrap().trim(), "none");
 }
 
 #[test]
@@ -1126,7 +1114,7 @@ fn required_field_with_default_note_still_marks_the_value_as_required() {
     let row = field_wrap_lines(&usage, "APP_WORKER_COUNT")[0];
     assert_eq!(
         row.split(" | ").nth(2).unwrap().trim(),
-        "— (physical CPU count)"
+        "required (physical CPU count)"
     );
 
     clean_env();
@@ -1154,15 +1142,13 @@ fn usage_snapshot_secret_default_note_and_none() {
         &usage,
         r#"Environment variables
 
-—: must be set.
-none: optional, unset by default.
 A * after a name marks a secret.
 Integer ranges are inclusive bounds; a value outside them fails to parse.
 
 VARIABLE         | TYPE            | DEFAULT
 -----------------+-----------------+---------------------
 APP_APP_NAME     | string          | none
-APP_DSN *        | string          | —
+APP_DSN *        | string          | required
 APP_PORT         | u16 (0..=65535) | "8080"
 APP_WORKER_COUNT | usize           | (physical CPU count)
 "#,

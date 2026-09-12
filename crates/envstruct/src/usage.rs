@@ -558,7 +558,7 @@ pub trait EnvStructUsage: EnvParseNested {
 
 impl<T: EnvParseNested> EnvStructUsage for T {}
 
-const NO_DEFAULT: &str = "—";
+const NO_DEFAULT: &str = "required";
 const WRAP_WIDTH: usize = 40;
 /// Rows of a conditional group are indented under its marker line.
 const INDENT: &str = "  ";
@@ -1004,10 +1004,7 @@ fn syntax_notes(tree: &UsageTree) -> Vec<String> {
         seconds |= typ.uses_seconds();
         bytesize |= typ.uses_bytesize();
     });
-    let mut notes = vec![
-        "—: must be set.".to_string(),
-        "none: optional, unset by default.".to_string(),
-    ];
+    let mut notes = Vec::new();
     if items_have_secret(&tree.items) {
         notes.push("A * after a name marks a secret.".to_string());
     }
