@@ -488,8 +488,8 @@ Byte sizes accept values such as 4MB and 10MiB.
 
 VARIABLE                                 TYPE      REQUIRED  DEFAULT        VALUES
 AVATARDB_IMAGE_SIZE_LIMIT                bytesize  no        4MB            —
-AVATARDB_IMAGE_WIDTH                     integer   no        150            —
-AVATARDB_NSFW_SCORE_MAX                  float     no        0.9            —
+AVATARDB_IMAGE_WIDTH                     u32       no        150            —
+AVATARDB_NSFW_SCORE_MAX                  f64       no        0.9            —
 AVATARDB_MODE                            enum      no        gcs            gcs | local | mock
 [used when AVATARDB_MODE=gcs (default)]            no
   AVATARDB_BUCKET_NAME                   string    yes       —              —
@@ -518,7 +518,9 @@ fn integer_range_is_shown_and_enforced() {
     );
 
     let usage = Config::usage_with_prefix("TEST").unwrap();
-    assert!(usage.contains("integer"));
+    assert_eq!(field.typ.display(), "u16");
+    assert!(usage.contains("u16"));
+    assert!(!usage.contains("integer"));
     assert!(usage.contains("0..=65535"));
 
     clean_env();
@@ -546,6 +548,7 @@ fn optional_integer_keeps_its_range() {
     let tree = Config::get_usage_tree("TEST", None).unwrap();
     let field = find_field(&tree.items, "TEST_RETRIES").unwrap();
     assert!(!field.required);
+    assert_eq!(field.typ.display(), "u8");
     assert_eq!(
         field.typ.int_limit().map(|limit| limit.display()),
         Some("0..=255".to_string())
@@ -583,17 +586,85 @@ fn wide_integer_reports_no_bounds() {
 
     let tree = Config::get_usage_tree("TEST", None).unwrap();
     assert_eq!(
-        find_field(&tree.items, "TEST_CACHE_SIZE").unwrap().typ,
-        UsageType::Integer(None)
+        find_field(&tree.items, "TEST_CACHE_SIZE")
+            .unwrap()
+            .typ
+            .display(),
+        "usize"
     );
     assert_eq!(
-        find_field(&tree.items, "TEST_OFFSET").unwrap().typ,
-        UsageType::Integer(None)
+        find_field(&tree.items, "TEST_OFFSET")
+            .unwrap()
+            .typ
+            .display(),
+        "i64"
     );
 
     let usage = Config::usage_with_prefix("TEST").unwrap();
+    assert!(usage.contains("usize"));
+    assert!(usage.contains("i64"));
+    assert!(!usage.contains("integer"));
     assert!(!usage.contains("..="));
     assert!(!usage.contains("Integer ranges"));
+}
+
+#[test]
+#[serial]
+fn numeric_usage_prints_the_rust_type() {
+    #[derive(EnvStruct, Debug)]
+    pub struct Config {
+        pub pool_size: u32,
+        pub score: f64,
+        pub ratio: f32,
+        pub data_dir: std::path::PathBuf,
+        pub timeout_secs: std::time::Duration,
+        #[env(default = "30s")]
+        pub idle_timeout: envstruct::Duration,
+    }
+
+    let tree = Config::get_usage_tree("TEST", None).unwrap();
+    assert_eq!(
+        find_field(&tree.items, "TEST_POOL_SIZE")
+            .unwrap()
+            .typ
+            .display(),
+        "u32"
+    );
+    assert_eq!(
+        find_field(&tree.items, "TEST_SCORE").unwrap().typ.display(),
+        "f64"
+    );
+    assert_eq!(
+        find_field(&tree.items, "TEST_RATIO").unwrap().typ.display(),
+        "f32"
+    );
+    assert_eq!(
+        find_field(&tree.items, "TEST_DATA_DIR")
+            .unwrap()
+            .typ
+            .display(),
+        "path"
+    );
+    assert_eq!(
+        find_field(&tree.items, "TEST_TIMEOUT_SECS")
+            .unwrap()
+            .typ
+            .display(),
+        "seconds"
+    );
+    assert_eq!(
+        find_field(&tree.items, "TEST_IDLE_TIMEOUT")
+            .unwrap()
+            .typ
+            .display(),
+        "duration"
+    );
+
+    let usage = Config::usage_with_prefix("TEST").unwrap();
+    assert!(!usage.contains("integer"));
+    assert!(!usage.contains("float"));
+    assert!(usage.contains("Seconds accept a plain number, for example 30, not 30s."));
+    assert!(usage.contains("Durations accept values such as 15s, 10m, and 24h."));
 }
 
 #[test]
@@ -609,11 +680,13 @@ fn non_zero_reports_the_zero_exclusion() {
 
     let tree = Config::get_usage_tree("TEST", None).unwrap();
     let workers = find_field(&tree.items, "TEST_WORKERS").unwrap();
+    assert_eq!(workers.typ.display(), "NonZeroUsize");
     assert_eq!(
         workers.typ.int_limit().map(|limit| limit.display()),
         Some("not 0".to_string())
     );
     let offset = find_field(&tree.items, "TEST_OFFSET").unwrap();
+    assert_eq!(offset.typ.display(), "NonZeroI8");
     assert_eq!(
         offset.typ.int_limit().map(|limit| limit.display()),
         Some("-128..=127, not 0".to_string())

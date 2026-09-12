@@ -342,7 +342,7 @@ DOOM_RELOAD_DELAY                          duration  no        60s      —
 DOOM_MODE                                  enum      no        local    local | remote
 [selected when DOOM_MODE=local (default)]            yes
 [selected when DOOM_MODE=remote]                     yes
-  DOOM_REMOTE_CACHE_SIZE                   integer   no        10000    —
+  DOOM_REMOTE_CACHE_SIZE                   u32       no        10000    —
   DOOM_REMOTE_DSN                          string    yes       —        —
 "#;
     if usage != expected {

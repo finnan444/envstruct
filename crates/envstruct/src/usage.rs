@@ -56,8 +56,10 @@ impl IntLimit {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum UsageType {
     String,
-    Integer(Option<IntLimit>),
-    Float,
+    /// Rust integer type name (`u32`, `NonZeroUsize`) and optional parser bounds.
+    Integer(String, Option<IntLimit>),
+    /// Rust float type name (`f32`, `f64`).
+    Float(String),
     Bool,
     Duration,
     ByteSize,
@@ -72,8 +74,8 @@ impl UsageType {
     pub fn display(&self) -> String {
         match self {
             Self::String => "string".to_string(),
-            Self::Integer(_) => "integer".to_string(),
-            Self::Float => "float".to_string(),
+            Self::Integer(name, _) => name.clone(),
+            Self::Float(name) => name.clone(),
             Self::Bool => "bool".to_string(),
             Self::Duration => "duration".to_string(),
             Self::ByteSize => "bytesize".to_string(),
@@ -88,7 +90,7 @@ impl UsageType {
     /// Parser limits of this type, when it is a numeric type worth constraining.
     pub fn int_limit(&self) -> Option<&IntLimit> {
         match self {
-            Self::Integer(limit) => limit.as_ref(),
+            Self::Integer(_, limit) => limit.as_ref(),
             _ => None,
         }
     }
@@ -132,6 +134,15 @@ impl UsageType {
             Self::Other(name) => name.starts_with("set<"),
             Self::List(inner) => inner.uses_set_other(),
             Self::Map(key, value) => key.uses_set_other() || value.uses_set_other(),
+            _ => false,
+        }
+    }
+
+    fn uses_seconds(&self) -> bool {
+        match self {
+            Self::Other(name) => name == "seconds",
+            Self::List(inner) => inner.uses_seconds(),
+            Self::Map(key, value) => key.uses_seconds() || value.uses_seconds(),
             _ => false,
         }
     }
@@ -795,6 +806,7 @@ fn syntax_notes(tree: &UsageTree) -> Vec<String> {
     let mut map = false;
     let mut set = false;
     let mut duration = false;
+    let mut seconds = false;
     let mut bytesize = false;
     let mut int_range = false;
     let mut non_zero = false;
@@ -807,6 +819,7 @@ fn syntax_notes(tree: &UsageTree) -> Vec<String> {
         map |= typ.uses_map();
         set |= typ.uses_set_other();
         duration |= typ.uses_duration();
+        seconds |= typ.uses_seconds();
         bytesize |= typ.uses_bytesize();
     });
     let mut notes = Vec::new();
@@ -827,6 +840,9 @@ fn syntax_notes(tree: &UsageTree) -> Vec<String> {
     }
     if set {
         notes.push("Sets are semicolon-separated values, for example a;b;c.".to_string());
+    }
+    if seconds {
+        notes.push("Seconds accept a plain number, for example 30, not 30s.".to_string());
     }
     if duration {
         notes.push("Durations accept values such as 15s, 10m, and 24h.".to_string());
