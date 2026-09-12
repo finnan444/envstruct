@@ -1,0 +1,5 @@
+error: env enum variant `Remote` supports only `with` on its payload; other attributes belong on the variant or on the payload type
+  --> tests/compiletest/tagged_enum_payload_attribute.rs:12:5
+   |
+12 |     Remote(#[env(default = "x")] RemoteConfig),
+   |     ^^^^^^

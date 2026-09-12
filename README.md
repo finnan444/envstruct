@@ -86,6 +86,58 @@ fn main() -> Result<(), envstruct::EnvStructError> {
 - `used_if`: Application-usage condition as `field=value`. Shown in usage; not enforced by the parser.
 - `inline`: Merge a nested struct's fields into the parent usage group.
 - `skip`: Do not parse or document the field.
+- `tag`: On an enum, the variable that selects the variant, as in `#[env(tag = "mode")]`. On a variant of such an enum, `name` renames the value that selects it and `flatten` drops its segment from the names of its payload.
+
+## Enums with data
+
+An enum without `tag` stays a single value parsed by its own `FromStr`. With `tag`, the variants carry their own configuration: the tag variable selects one variant, only its payload is parsed, and the help states the condition of every group by itself.
+
+Before, the mode and the configuration it selects are two declarations. Nothing links them, so the link is repeated by hand in `used_if`, and the group has to be optional to keep the other mode parsable:
+
+```rust
+#[derive(EnvStruct, Debug)]
+pub struct DeployConfig {
+    #[env(default = "local")]
+    pub mode: Mode,
+
+    #[env(title = "Remote", used_if = "mode=remote")]
+    pub remote: Option<RemoteConfig>,
+}
+```
+
+After, the link lives in the type:
+
+```rust
+#[derive(EnvStruct, Debug)]
+#[env(tag = "mode")]
+pub enum Backend {
+    Local,
+    Remote(RemoteConfig),
+}
+
+#[derive(EnvStruct, Debug)]
+pub struct DeployConfig {
+    #[env(flatten, default = "local")]
+    pub backend: Backend,
+}
+```
+
+With the prefix `DEPLOY`, `DEPLOY_MODE` selects the variant:
+
+```text
+VARIABLE                                     TYPE     REQUIRED  DEFAULT  VALUES
+DEPLOY_MODE                                  enum     no        local    local | remote
+[selected when DEPLOY_MODE=local (default)]           yes
+[selected when DEPLOY_MODE=remote]                    yes
+  DEPLOY_REMOTE_DSN                          string   yes       —        —
+```
+
+- A variant is a unit variant or a newtype variant holding one configuration; other shapes are rejected at compile time.
+- The value selecting a variant is its name in snake case (`Remote` becomes `remote`), or `#[env(name = "...")]`.
+- The payload of `Remote` parses from `DEPLOY_REMOTE_`; `#[env(flatten)]` on the variant parses it from `DEPLOY_` instead. Both the parser and the help use the same names.
+- The payload keeps its own required fields and defaults; variables of the variants that are not selected are never parsed.
+- The default variant is the default of the field holding the enum, as for any other value. Without one, a missing tag variable is a missing required variable.
+- An unknown value names the values that would work.
 
 ## License
 

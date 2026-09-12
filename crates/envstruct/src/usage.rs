@@ -171,12 +171,15 @@ pub struct UsageGroup {
     pub items: Vec<UsageItem>,
 }
 
-/// Application-usage condition. The parser does not enforce it.
+/// Condition under which a group applies, written as `env_name=value`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UsageUsedIf {
     pub env_name: String,
     pub value: String,
     pub switch_default: Option<String>,
+    /// Whether the parser itself selects the group by this condition. A `used_if` condition
+    /// is application usage and stays `false`; the tag of an enum with data sets it.
+    pub enforced: bool,
 }
 
 /// Usage metadata for a config type.
@@ -253,6 +256,81 @@ pub fn attach_field_usage(tree: UsageTree, meta: FieldUsageMeta) -> Vec<UsageIte
                 })]
             }
         }
+    }
+}
+
+/// One variant of an enum selected by a tag variable, as it appears in usage output.
+pub struct TaggedVariant {
+    value: String,
+    tree: Option<UsageTree>,
+}
+
+impl TaggedVariant {
+    /// A variant that needs no variables of its own.
+    pub fn unit(value: impl Into<String>) -> Self {
+        Self {
+            value: value.into(),
+            tree: None,
+        }
+    }
+
+    /// A variant whose payload parses from its own group of variables.
+    pub fn payload(value: impl Into<String>, tree: UsageTree) -> Self {
+        Self {
+            value: value.into(),
+            tree: Some(tree),
+        }
+    }
+}
+
+/// Usage tree of an enum whose variants carry configuration: the tag variable that selects
+/// the variant, then one group per variant conditioned on the value that selects it.
+pub fn tagged_enum_usage(
+    tag_var: String,
+    default: Option<&str>,
+    title: Option<String>,
+    variants: Vec<TaggedVariant>,
+) -> UsageTree {
+    let values = variants
+        .iter()
+        .map(|variant| variant.value.clone())
+        .collect();
+    let mut items = vec![UsageItem::Field(UsageField {
+        name: tag_var.clone(),
+        typ: UsageType::Enum,
+        required: default.is_none(),
+        default: default.map(str::to_string),
+        values: Some(values),
+    })];
+
+    for variant in variants {
+        let used_if = UsageUsedIf {
+            env_name: tag_var.clone(),
+            value: variant.value.clone(),
+            switch_default: default.map(str::to_string),
+            enforced: true,
+        };
+        let group = match variant.tree {
+            Some(tree) => UsageGroup {
+                title: tree.title.unwrap_or_else(|| fallback_title(&variant.value)),
+                optional: tree.kind == UsageTreeKind::OptionalStruct,
+                used_if: Some(used_if),
+                items: tree.items,
+            },
+            None => UsageGroup {
+                title: fallback_title(&variant.value),
+                optional: false,
+                used_if: Some(used_if),
+                items: Vec::new(),
+            },
+        };
+        items.push(UsageItem::Group(group));
+    }
+
+    UsageTree {
+        title,
+        kind: UsageTreeKind::Struct,
+        items,
     }
 }
 
@@ -342,14 +420,20 @@ fn render_usage(tree: &UsageTree) -> String {
         "All groups are shown, regardless of the current environment."
     );
 
-    let (blocks, has_optional, has_used_if) = collect_blocks(tree);
-    if has_used_if {
+    let (blocks, legend) = collect_blocks(tree);
+    if legend.used_if {
         let _ = writeln!(
             out,
             "[used when NAME=value] is application usage; the parser does not enforce it."
         );
     }
-    if has_optional {
+    if legend.selected_if {
+        let _ = writeln!(
+            out,
+            "[selected when NAME=value] is checked by the parser: only the selected group is parsed."
+        );
+    }
+    if legend.optional {
         let _ = writeln!(
             out,
             "REQUIRED on a group line is about the group: no = it may be omitted entirely,"
@@ -399,31 +483,47 @@ fn split_items(items: &[UsageItem]) -> (Vec<UsageField>, Vec<UsageGroup>) {
     (fields, groups)
 }
 
-fn collect_blocks(tree: &UsageTree) -> (Vec<UsageBlock>, bool, bool) {
+/// Explanatory lines the table needs, decided by what the tree contains.
+#[derive(Default)]
+struct Legend {
+    optional: bool,
+    used_if: bool,
+    selected_if: bool,
+}
+
+impl Legend {
+    fn note(&mut self, group: &UsageGroup) {
+        self.optional |= group.optional;
+        match &group.used_if {
+            Some(used_if) if used_if.enforced => self.selected_if = true,
+            Some(_) => self.used_if = true,
+            None => {}
+        }
+    }
+}
+
+fn collect_blocks(tree: &UsageTree) -> (Vec<UsageBlock>, Legend) {
     let mut blocks = Vec::new();
-    let mut has_optional = false;
-    let mut has_used_if = false;
+    let mut legend = Legend::default();
     let (fields, groups) = split_items(&tree.items);
     if !fields.is_empty() {
         blocks.push(UsageBlock::Fields(fields));
     }
     for group in &groups {
-        collect_group(group, "", &mut blocks, &mut has_optional, &mut has_used_if);
+        collect_group(group, "", &mut blocks, &mut legend);
     }
-    (blocks, has_optional, has_used_if)
+    (blocks, legend)
 }
 
 fn collect_group(
     group: &UsageGroup,
     parent_path: &str,
     blocks: &mut Vec<UsageBlock>,
-    has_optional: &mut bool,
-    has_used_if: &mut bool,
+    legend: &mut Legend,
 ) {
     let path = group_path(parent_path, &group.title);
     let (fields, children) = split_items(&group.items);
-    *has_optional |= group.optional;
-    *has_used_if |= group.used_if.is_some();
+    legend.note(group);
     if group.optional || group.used_if.is_some() {
         blocks.push(UsageBlock::Section {
             marker: section_marker(group, &path),
@@ -434,7 +534,7 @@ fn collect_group(
         blocks.push(UsageBlock::Fields(fields));
     }
     for child in &children {
-        collect_group(child, &path, blocks, has_optional, has_used_if);
+        collect_group(child, &path, blocks, legend);
     }
 }
 
@@ -449,7 +549,8 @@ fn group_path(parent_path: &str, title: &str) -> String {
 fn section_marker(group: &UsageGroup, path: &str) -> String {
     let mut parts = Vec::new();
     if let Some(used_if) = &group.used_if {
-        let mut cond = format!("used when {}={}", used_if.env_name, used_if.value);
+        let verb = if used_if.enforced { "selected" } else { "used" };
+        let mut cond = format!("{verb} when {}={}", used_if.env_name, used_if.value);
         if used_if.switch_default.as_deref() == Some(used_if.value.as_str()) {
             cond.push_str(" (default)");
         }

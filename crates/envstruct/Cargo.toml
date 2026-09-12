@@ -59,3 +59,7 @@ path = "example/basic.rs"
 [[example]]
 name = "usage_groups"
 path = "example/usage_groups.rs"
+
+[[example]]
+name = "tagged_enum"
+path = "example/tagged_enum.rs"
