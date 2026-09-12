@@ -32,6 +32,25 @@ fn field_docs_preserve_markdown_and_stay_with_the_assignment() {
 }
 
 #[test]
+fn group_description_replaces_title_with_undocumented_title_as_fallback() {
+    #[derive(EnvStruct)]
+    struct Database {
+        dsn: String,
+    }
+    #[derive(EnvStruct)]
+    struct Config {
+        /// Player database, read to enrich a ticket with game info.
+        datadb: Database,
+        /// Optional archive database.
+        archive: Option<Database>,
+        fallback: Database,
+    }
+
+    let example = Config::get_usage_tree("", None).unwrap().to_env_example();
+    assert_eq!(example, "# Player database, read to enrich a ticket with game info.\nDATADB_DSN=\n\n# Optional archive database.\n# ARCHIVE_DSN=\n\n# Fallback\nFALLBACK_DSN=\n\n");
+}
+
+#[test]
 fn inactive_groups_keep_their_own_and_their_child_descriptions() {
     #[derive(EnvStruct)]
     struct Remote {

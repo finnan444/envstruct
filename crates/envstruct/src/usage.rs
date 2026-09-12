@@ -241,6 +241,7 @@ impl UsageTree {
     /// their condition matches the switch default and their parent is active. Optional
     /// groups without a condition stay commented to avoid enabling them accidentally.
     /// Field doc-comments are printed above assignments or groups, preserving Markdown.
+    /// Group descriptions replace their titles; usage conditions are always printed.
     ///
     /// `used_if` only describes application usage; it does not relax parser requirements.
     /// Empty assignments are placeholders, and types such as `String` accept them.
@@ -300,8 +301,10 @@ fn render_env_items(items: &[UsageItem], active: bool, output: &mut String) {
                     );
                     condition.switch_default.as_deref() == Some(condition.value.as_str())
                 } else {
-                    for line in group.title.lines() {
-                        let _ = writeln!(output, "# {line}");
+                    if group.description.is_none() {
+                        for line in group.title.lines() {
+                            let _ = writeln!(output, "# {line}");
+                        }
                     }
                     !group.optional
                 };
