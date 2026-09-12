@@ -565,7 +565,7 @@ pub trait EnvStructUsage: EnvParseNested {
 
 impl<T: EnvParseNested> EnvStructUsage for T {}
 
-const NO_DEFAULT: &str = "required";
+const NO_DEFAULT: &str = "<required>";
 const WRAP_WIDTH: usize = 40;
 /// Rows of a conditional group are indented under its marker line.
 const INDENT: &str = "  ";
@@ -822,7 +822,7 @@ fn field_columns(field: &UsageField, indent: &str) -> Vec<String> {
 
 fn field_name_cell(field: &UsageField, indent: &str) -> String {
     if field.secret {
-        format!("{indent}{} *", field.name)
+        format!("{indent}{} (secret)", field.name)
     } else {
         format!("{indent}{}", field.name)
     }
@@ -1012,9 +1012,6 @@ fn syntax_notes(tree: &UsageTree) -> Vec<String> {
         bytesize |= typ.uses_bytesize();
     });
     let mut notes = Vec::new();
-    if items_have_secret(&tree.items) {
-        notes.push("A * after a name marks a secret.".to_string());
-    }
     if int_range {
         notes.push(
             "Integer ranges are inclusive bounds; a value outside them fails to parse.".to_string(),
@@ -1053,13 +1050,6 @@ fn walk_item_types(items: &[UsageItem], visit: &mut impl FnMut(&UsageType)) {
             UsageItem::Group(group) => walk_item_types(&group.items, visit),
         }
     }
-}
-
-fn items_have_secret(items: &[UsageItem]) -> bool {
-    items.iter().any(|item| match item {
-        UsageItem::Field(field) => field.secret,
-        UsageItem::Group(group) => items_have_secret(&group.items),
-    })
 }
 
 fn normalize_output(out: &str) -> String {
