@@ -422,7 +422,7 @@ fn render_usage(tree: &UsageTree) -> String {
     let _ = writeln!(out);
     let _ = writeln!(out, "REQUIRED=yes: must be set.");
     let _ = writeln!(out, "DEFAULT: value used when the variable is unset.");
-    let _ = writeln!(out, "{NO_DEFAULT}: no default. \"\": an empty string.");
+    let _ = writeln!(out, "{NO_DEFAULT}: no default.");
 
     let blocks = collect_blocks(tree);
     let syntax = syntax_notes(tree);
@@ -738,17 +738,24 @@ fn split_at_char(s: &str, idx: usize) -> (&str, &str) {
     }
 }
 
+fn quote_value(value: &str) -> String {
+    format!("\"{value}\"")
+}
+
 fn display_default(default: &Option<String>) -> String {
     match default {
         None => NO_DEFAULT.to_string(),
-        Some(value) if value.is_empty() => r#""""#.to_string(),
-        Some(value) => value.clone(),
+        Some(value) => quote_value(value),
     }
 }
 
 fn display_values(field: &UsageField) -> String {
     if let Some(values) = &field.values {
-        return values.join(" | ");
+        return values
+            .iter()
+            .map(|value| quote_value(value))
+            .collect::<Vec<_>>()
+            .join(" | ");
     }
     match field.typ.int_limit() {
         Some(limit) => limit.display(),

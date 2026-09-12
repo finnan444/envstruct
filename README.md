@@ -126,8 +126,8 @@ With the prefix `DEPLOY`, `DEPLOY_MODE` selects the variant:
 
 ```text
 VARIABLE                                    | TYPE   | REQUIRED | DEFAULT | VALUES
---------------------------------------------+--------+----------+---------+-----------------
-DEPLOY_MODE                                 | enum   | no       | local   | local | remote
+--------------------------------------------+--------+----------+---------+---------------------
+DEPLOY_MODE                                 | enum   | no       | "local" | "local" | "remote"
 [selected when DEPLOY_MODE=local (default)] |        | yes
 [selected when DEPLOY_MODE=remote]          |        | yes
   DEPLOY_REMOTE_DSN                         | string | yes      | —       | —

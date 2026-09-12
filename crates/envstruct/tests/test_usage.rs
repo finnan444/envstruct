@@ -147,6 +147,11 @@ fn default_field_is_no_and_shown_value_is_applied() {
     assert!(!width.required);
     assert_eq!(width.default.as_deref(), Some("150"));
 
+    let usage = Config::usage_with_prefix("TEST").unwrap();
+    assert!(usage.contains(r#""gcs""#));
+    assert!(usage.contains(r#""150""#));
+    assert!(usage.contains(r#""gcs" | "local" | "mock""#));
+
     clean_env();
     let config = Config::with_prefix("TEST").unwrap();
     assert_eq!(config.mode, StoreMode::gcs);
@@ -189,13 +194,31 @@ fn empty_default_differs_from_missing_default() {
     assert_eq!(missing.default, None);
 
     let usage = Config::usage_with_prefix("TEST").unwrap();
-    assert!(usage.contains(r#""""#));
+    assert!(usage.contains(r#"| """#));
     assert!(usage.contains('—'));
 
     clean_env();
     let config = Config::with_prefix("TEST").unwrap();
     assert_eq!(config.empty, "");
     assert_eq!(config.missing, None);
+}
+
+#[test]
+#[serial]
+fn quoted_defaults_show_literals() {
+    #[derive(EnvStruct, Debug)]
+    pub struct Config {
+        #[env(default = "false")]
+        pub debug: bool,
+        #[env(default = "20")]
+        pub port: u16,
+    }
+
+    let usage = Config::usage_with_prefix("TEST").unwrap();
+    assert!(usage.contains(r#""false""#));
+    assert!(usage.contains(r#""20""#));
+    assert!(usage.contains("0..=65535"));
+    assert!(!usage.contains(r#""0..=65535""#));
 }
 
 #[test]
@@ -479,21 +502,21 @@ fn usage_snapshot_groups_and_conditions() {
 
 REQUIRED=yes: must be set.
 DEFAULT: value used when the variable is unset.
-—: no default. "": an empty string.
+—: no default.
 
 Byte sizes accept values such as 4MB and 10MiB.
 
-VARIABLE                                | TYPE     | REQUIRED | DEFAULT       | VALUES
-----------------------------------------+----------+----------+---------------+-------------------
-AVATARDB_IMAGE_SIZE_LIMIT               | bytesize | no       | 4MB           | —
-AVATARDB_IMAGE_WIDTH                    | u32      | no       | 150           | —
-AVATARDB_NSFW_SCORE_MAX                 | f64      | no       | 0.9           | —
-AVATARDB_MODE                           | enum     | no       | gcs           | gcs | local | mock
+VARIABLE                                | TYPE     | REQUIRED | DEFAULT         | VALUES
+----------------------------------------+----------+----------+-----------------+-------------------------
+AVATARDB_IMAGE_SIZE_LIMIT               | bytesize | no       | "4MB"           | —
+AVATARDB_IMAGE_WIDTH                    | u32      | no       | "150"           | —
+AVATARDB_NSFW_SCORE_MAX                 | f64      | no       | "0.9"           | —
+AVATARDB_MODE                           | enum     | no       | "gcs"           | "gcs" | "local" | "mock"
 [used when AVATARDB_MODE=gcs (default)] |          | no
-  AVATARDB_BUCKET_NAME                  | string   | yes      | —             | —
-  AVATARDB_DIGEST_SALT                  | string   | no       | squibblefluff | —
+  AVATARDB_BUCKET_NAME                  | string   | yes      | —               | —
+  AVATARDB_DIGEST_SALT                  | string   | no       | "squibblefluff" | —
 [used when AVATARDB_MODE=local]         |          | no
-  AVATARDB_LOCAL_DATA_DIR               | string   | yes      | —             | —
+  AVATARDB_LOCAL_DATA_DIR               | string   | yes      | —               | —
 [used when AVATARDB_MODE=mock]          |          | no
 "#,
     );
