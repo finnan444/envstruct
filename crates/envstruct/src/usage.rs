@@ -636,9 +636,12 @@ fn column_widths(rows: &[(&UsageField, &str)], markers: &[&str], has_values: boo
             if i == 0 {
                 widths[i] = widths[i].max(col.chars().count());
             } else {
-                let first = wrap_text(col, wrap_width_for(i)).into_iter().next();
-                let first_len = first.map(|s| s.chars().count()).unwrap_or(0);
-                widths[i] = widths[i].max(first_len);
+                let max_len = wrap_text(col, wrap_width_for(i))
+                    .iter()
+                    .map(|fragment| fragment.chars().count())
+                    .max()
+                    .unwrap_or(0);
+                widths[i] = widths[i].max(max_len);
             }
         }
     }
@@ -708,8 +711,8 @@ fn wrap_text(s: &str, width: usize) -> Vec<String> {
         }
         let split_at = find_split(rest, width);
         let (head, tail) = split_at_char(rest, split_at);
-        lines.push(head.trim_end().to_string());
-        rest = tail.trim_start();
+        lines.push(trim_wrap_edge(head).to_string());
+        rest = trim_wrap_edge(tail);
     }
     if lines.is_empty() {
         lines.push(String::new());
@@ -723,7 +726,7 @@ fn find_split(s: &str, width: usize) -> usize {
         if count >= width {
             return last_break.unwrap_or(idx);
         }
-        if matches!(ch, ' ' | ',' | ';' | '|') {
+        if matches!(ch, ' ' | ',' | ';') {
             last_break = Some(idx + ch.len_utf8());
         }
     }
@@ -736,6 +739,10 @@ fn split_at_char(s: &str, idx: usize) -> (&str, &str) {
     } else {
         s.split_at(idx)
     }
+}
+
+fn trim_wrap_edge(s: &str) -> &str {
+    s.trim_matches(|c: char| matches!(c, ' ' | ',' | ';'))
 }
 
 fn quote_value(value: &str) -> String {
@@ -755,11 +762,11 @@ fn display_values(field: &UsageField) -> String {
             .iter()
             .map(|value| quote_value(value))
             .collect::<Vec<_>>()
-            .join(" | ");
+            .join(", ");
     }
     match field.typ.int_limit() {
         Some(limit) => limit.display(),
-        None => NO_DEFAULT.to_string(),
+        None => String::new(),
     }
 }
 

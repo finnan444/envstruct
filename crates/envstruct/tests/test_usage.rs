@@ -150,7 +150,7 @@ fn default_field_is_no_and_shown_value_is_applied() {
     let usage = Config::usage_with_prefix("TEST").unwrap();
     assert!(usage.contains(r#""gcs""#));
     assert!(usage.contains(r#""150""#));
-    assert!(usage.contains(r#""gcs" | "local" | "mock""#));
+    assert!(usage.contains(r#""gcs", "local", "mock""#));
 
     clean_env();
     let config = Config::with_prefix("TEST").unwrap();
@@ -492,6 +492,102 @@ fn long_values_are_not_truncated() {
     );
 }
 
+/// Character positions of column pipes, so alignment is compared in display columns.
+fn pipe_positions(line: &str) -> Vec<usize> {
+    line.chars()
+        .enumerate()
+        .filter_map(|(idx, ch)| (ch == '|').then_some(idx))
+        .collect()
+}
+
+fn field_wrap_lines<'a>(usage: &'a str, name: &str) -> Vec<&'a str> {
+    let mut lines = usage.lines().skip_while(|line| !line.starts_with(name));
+    let mut out = Vec::new();
+    if let Some(first) = lines.next() {
+        out.push(first);
+    }
+    for line in lines {
+        if line.starts_with(' ') && line.contains('|') {
+            out.push(line);
+        } else {
+            break;
+        }
+    }
+    out
+}
+
+fn values_cell(line: &str) -> &str {
+    line.rsplit_once(" | ")
+        .map(|(_, cell)| cell)
+        .unwrap_or(line)
+}
+
+#[test]
+#[serial]
+fn wrapped_values_stay_inside_the_column() {
+    #[allow(non_camel_case_types)]
+    #[derive(EnvStruct, Debug, Clone, PartialEq, Eq, strum::Display, strum::EnumString)]
+    enum CustomField {
+        nick,
+        lang,
+        email,
+        platform_type,
+        public_id,
+        player_id,
+        support_id,
+        refferer,
+        crash_id,
+        revenue,
+        game_info,
+        extra_id,
+    }
+
+    #[derive(EnvStruct, Debug)]
+    pub struct Config {
+        pub custom_fields: CustomField,
+    }
+
+    let tree = Config::get_usage_tree("TEST", None).unwrap();
+    let field = find_field(&tree.items, "TEST_CUSTOM_FIELDS").unwrap();
+    assert_eq!(field.values.as_ref().map(Vec::len), Some(12));
+
+    let usage = Config::usage_with_prefix("TEST").unwrap();
+    let header = usage
+        .lines()
+        .find(|line| line.starts_with("VARIABLE"))
+        .expect("header");
+    let header_pipes = pipe_positions(header);
+    let lines = field_wrap_lines(&usage, "TEST_CUSTOM_FIELDS");
+    assert!(
+        lines.len() > 1,
+        "12 values should wrap at the VALUES column width:\n{usage}"
+    );
+
+    for line in &lines {
+        assert_eq!(
+            pipe_positions(line),
+            header_pipes,
+            "column separators must stay aligned:\n{line}\n{header}"
+        );
+        let values = values_cell(line);
+        assert!(
+            values.chars().count() <= 40,
+            "VALUES fragment longer than wrap width ({:?} has {} chars):\n{line}",
+            values,
+            values.chars().count()
+        );
+        assert!(
+            !values.starts_with(',')
+                && !values.ends_with(',')
+                && !values.starts_with('|')
+                && !values.ends_with('|'),
+            "wrap fragment must not start or end with a value separator: {values:?}"
+        );
+    }
+    assert!(usage.contains(r#""nick", "lang""#));
+    assert!(!usage.contains(r#""nick" | "lang""#));
+}
+
 #[test]
 #[serial]
 fn usage_snapshot_groups_and_conditions() {
@@ -507,16 +603,16 @@ DEFAULT: value used when the variable is unset.
 Byte sizes accept values such as 4MB and 10MiB.
 
 VARIABLE                                | TYPE     | REQUIRED | DEFAULT         | VALUES
-----------------------------------------+----------+----------+-----------------+-------------------------
-AVATARDB_IMAGE_SIZE_LIMIT               | bytesize | no       | "4MB"           | —
-AVATARDB_IMAGE_WIDTH                    | u32      | no       | "150"           | —
-AVATARDB_NSFW_SCORE_MAX                 | f64      | no       | "0.9"           | —
-AVATARDB_MODE                           | enum     | no       | "gcs"           | "gcs" | "local" | "mock"
+----------------------------------------+----------+----------+-----------------+-----------------------
+AVATARDB_IMAGE_SIZE_LIMIT               | bytesize | no       | "4MB"
+AVATARDB_IMAGE_WIDTH                    | u32      | no       | "150"
+AVATARDB_NSFW_SCORE_MAX                 | f64      | no       | "0.9"
+AVATARDB_MODE                           | enum     | no       | "gcs"           | "gcs", "local", "mock"
 [used when AVATARDB_MODE=gcs (default)] |          | no
-  AVATARDB_BUCKET_NAME                  | string   | yes      | —               | —
-  AVATARDB_DIGEST_SALT                  | string   | no       | "squibblefluff" | —
+  AVATARDB_BUCKET_NAME                  | string   | yes      | —
+  AVATARDB_DIGEST_SALT                  | string   | no       | "squibblefluff"
 [used when AVATARDB_MODE=local]         |          | no
-  AVATARDB_LOCAL_DATA_DIR               | string   | yes      | —               | —
+  AVATARDB_LOCAL_DATA_DIR               | string   | yes      | —
 [used when AVATARDB_MODE=mock]          |          | no
 "#,
     );
