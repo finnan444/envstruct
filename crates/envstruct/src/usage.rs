@@ -40,13 +40,6 @@ impl IntLimit {
         }
     }
 
-    fn excludes_zero(&self) -> bool {
-        match self {
-            Self::Range { excludes_zero, .. } => *excludes_zero,
-            Self::NonZero => true,
-        }
-    }
-
     fn is_range(&self) -> bool {
         matches!(self, Self::Range { .. })
     }
@@ -419,10 +412,6 @@ enum UsageBlock {
 fn render_usage(tree: &UsageTree) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "Environment variables");
-    let _ = writeln!(out);
-    let _ = writeln!(out, "REQUIRED=yes: must be set.");
-    let _ = writeln!(out, "DEFAULT: value used when the variable is unset.");
-    let _ = writeln!(out, "{NO_DEFAULT}: no default.");
 
     let blocks = collect_blocks(tree);
     let syntax = syntax_notes(tree);
@@ -451,46 +440,121 @@ fn split_items(items: &[UsageItem]) -> (Vec<UsageField>, Vec<UsageGroup>) {
         }
     }
     fields.sort_by(|a, b| a.name.cmp(&b.name));
-    // A mode switch reads better right above the variants it selects.
-    let switches: Vec<&str> = groups
-        .iter()
-        .filter_map(|group| group.used_if.as_ref())
-        .map(|used_if| used_if.env_name.as_str())
-        .collect();
-    let (switch_fields, plain_fields): (Vec<UsageField>, Vec<UsageField>) = fields
-        .into_iter()
-        .partition(|field| switches.contains(&field.name.as_str()));
-    let fields = [plain_fields, switch_fields].concat();
     (fields, groups)
 }
 
 fn collect_blocks(tree: &UsageTree) -> Vec<UsageBlock> {
     let mut blocks = Vec::new();
-    let (fields, groups) = split_items(&tree.items);
-    if !fields.is_empty() {
-        blocks.push(UsageBlock::Fields(fields));
-    }
-    for group in &groups {
-        collect_group(group, "", &mut blocks);
-    }
+    emit_items(&tree.items, "", &mut blocks);
     blocks
 }
 
-fn collect_group(group: &UsageGroup, parent_path: &str, blocks: &mut Vec<UsageBlock>) {
+/// Mix sibling leaves and nested structs by env name so prefixes stay together.
+/// A used_if group stays glued under the switch that selects it.
+fn emit_items(items: &[UsageItem], parent_path: &str, blocks: &mut Vec<UsageBlock>) {
+    let (fields, groups) = split_items(items);
+
+    let mut used_if_by_switch: std::collections::HashMap<String, Vec<UsageGroup>> =
+        std::collections::HashMap::new();
+    let mut free_groups = Vec::new();
+    for group in groups {
+        match group
+            .used_if
+            .as_ref()
+            .map(|used_if| used_if.env_name.clone())
+        {
+            Some(name) => used_if_by_switch.entry(name).or_default().push(group),
+            None => free_groups.push(group),
+        }
+    }
+
+    let mut plain = Vec::new();
+    let mut switches = Vec::new();
+    for field in fields {
+        if used_if_by_switch.contains_key(&field.name) {
+            switches.push(field);
+        } else {
+            plain.push(field);
+        }
+    }
+
+    enum Piece {
+        Field(UsageField),
+        Group(UsageGroup),
+    }
+    let mut pieces: Vec<(String, Piece)> = Vec::new();
+    for field in plain {
+        pieces.push((field.name.clone(), Piece::Field(field)));
+    }
+    for group in free_groups {
+        let key = min_field_name(&group).unwrap_or_else(|| group.title.clone());
+        pieces.push((key, Piece::Group(group)));
+    }
+    pieces.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut pending = Vec::new();
+    for (_, piece) in pieces {
+        match piece {
+            Piece::Field(field) => pending.push(field),
+            Piece::Group(group) => {
+                if !pending.is_empty() {
+                    blocks.push(UsageBlock::Fields(std::mem::take(&mut pending)));
+                }
+                emit_group(group, parent_path, blocks);
+            }
+        }
+    }
+    if !pending.is_empty() {
+        blocks.push(UsageBlock::Fields(pending));
+    }
+
+    for switch in switches {
+        let groups = used_if_by_switch.remove(&switch.name).unwrap_or_default();
+        blocks.push(UsageBlock::Fields(vec![switch]));
+        for group in groups {
+            emit_group(group, parent_path, blocks);
+        }
+    }
+    for groups in used_if_by_switch.into_values() {
+        for group in groups {
+            emit_group(group, parent_path, blocks);
+        }
+    }
+}
+
+fn emit_group(group: UsageGroup, parent_path: &str, blocks: &mut Vec<UsageBlock>) {
     let path = group_path(parent_path, &group.title);
-    let (fields, children) = split_items(&group.items);
     if group.optional || group.used_if.is_some() {
+        let (fields, children) = split_items(&group.items);
         blocks.push(UsageBlock::Section {
-            marker: section_marker(group, &path),
+            marker: section_marker(&group, &path),
             required: !group.optional,
             fields,
         });
-    } else if !fields.is_empty() {
-        blocks.push(UsageBlock::Fields(fields));
+        for child in children {
+            emit_group(child, &path, blocks);
+        }
+    } else {
+        emit_items(&group.items, &path, blocks);
     }
-    for child in &children {
-        collect_group(child, &path, blocks);
+}
+
+fn min_field_name(group: &UsageGroup) -> Option<String> {
+    fn walk(items: &[UsageItem], min: &mut Option<String>) {
+        for item in items {
+            match item {
+                UsageItem::Field(field) => {
+                    if min.as_ref().is_none_or(|current| field.name < *current) {
+                        *min = Some(field.name.clone());
+                    }
+                }
+                UsageItem::Group(child) => walk(&child.items, min),
+            }
+        }
     }
+    let mut min = None;
+    walk(&group.items, &mut min);
+    min
 }
 
 fn group_path(parent_path: &str, title: &str) -> String {
@@ -518,9 +582,6 @@ fn section_marker(group: &UsageGroup, path: &str) -> String {
 
 fn render_blocks(out: &mut String, blocks: &[UsageBlock]) {
     let rows = table_rows(blocks);
-    let has_values = rows
-        .iter()
-        .any(|(field, _)| field.values.is_some() || field.typ.int_limit().is_some());
     let markers: Vec<&str> = blocks
         .iter()
         .filter_map(|block| match block {
@@ -528,9 +589,9 @@ fn render_blocks(out: &mut String, blocks: &[UsageBlock]) {
             UsageBlock::Fields(_) => None,
         })
         .collect();
-    let widths = column_widths(&rows, &markers, has_values);
+    let widths = column_widths(&rows, &markers);
     if !rows.is_empty() {
-        out.push_str(&format_row(&header_cols(has_values), &widths));
+        out.push_str(&format_row(&header_cols(), &widths));
         let _ = writeln!(out);
         out.push_str(&format_header_rule(&widths));
         let _ = writeln!(out);
@@ -546,19 +607,13 @@ fn render_blocks(out: &mut String, blocks: &[UsageBlock]) {
                 required,
                 fields,
             } => {
-                out.push_str(&format_row(
-                    &section_columns(marker, *required, has_values),
-                    &widths,
-                ));
+                out.push_str(&format_row(&section_columns(marker, *required), &widths));
                 let _ = writeln!(out);
                 (fields, INDENT)
             }
         };
         for field in fields {
-            out.push_str(&format_wrapped_row(
-                &field_columns(field, has_values, indent),
-                &widths,
-            ));
+            out.push_str(&format_wrapped_row(&field_columns(field, indent), &widths));
         }
     }
 }
@@ -578,8 +633,8 @@ fn table_rows(blocks: &[UsageBlock]) -> Vec<(&UsageField, &'static str)> {
 }
 
 /// A group marker occupies the VARIABLE column; REQUIRED then applies to the group itself.
-fn section_columns(marker: &str, required: bool, has_values: bool) -> Vec<String> {
-    let mut cols = vec![
+fn section_columns(marker: &str, required: bool) -> Vec<String> {
+    vec![
         marker.to_string(),
         String::new(),
         if required {
@@ -588,51 +643,50 @@ fn section_columns(marker: &str, required: bool, has_values: bool) -> Vec<String
             "no".to_string()
         },
         String::new(),
-    ];
-    if has_values {
-        cols.push(String::new());
-    }
-    cols
+    ]
 }
 
-fn header_cols(has_values: bool) -> Vec<String> {
-    let mut cols = vec![
+fn header_cols() -> Vec<String> {
+    vec![
         "VARIABLE".to_string(),
         "TYPE".to_string(),
         "REQUIRED".to_string(),
         "DEFAULT".to_string(),
-    ];
-    if has_values {
-        cols.push("VALUES".to_string());
-    }
-    cols
+    ]
 }
 
-fn field_columns(field: &UsageField, has_values: bool, indent: &str) -> Vec<String> {
-    let mut cols = vec![
+fn field_columns(field: &UsageField, indent: &str) -> Vec<String> {
+    vec![
         format!("{indent}{}", field.name),
-        field.typ.display(),
+        type_cell(field),
         if field.required {
             "yes".to_string()
         } else {
             "no".to_string()
         },
         display_default(&field.default),
-    ];
-    if has_values {
-        cols.push(display_values(field));
-    }
-    cols
+    ]
 }
 
-fn column_widths(rows: &[(&UsageField, &str)], markers: &[&str], has_values: bool) -> Vec<usize> {
-    let headers = header_cols(has_values);
+fn type_cell(field: &UsageField) -> String {
+    let base = field.typ.display();
+    if let Some(values) = &field.values {
+        return format!("{base}: {}", values.join("|"));
+    }
+    match field.typ.int_limit() {
+        Some(IntLimit::Range { min, max, .. }) => format!("{base} ({min}..={max})"),
+        Some(IntLimit::NonZero) | None => base,
+    }
+}
+
+fn column_widths(rows: &[(&UsageField, &str)], markers: &[&str]) -> Vec<usize> {
+    let headers = header_cols();
     let mut widths: Vec<usize> = headers.iter().map(|h| h.chars().count()).collect();
     for marker in markers {
         widths[0] = widths[0].max(marker.chars().count());
     }
     for (field, indent) in rows {
-        for (i, col) in field_columns(field, has_values, indent).iter().enumerate() {
+        for (i, col) in field_columns(field, indent).iter().enumerate() {
             if i == 0 {
                 widths[i] = widths[i].max(col.chars().count());
             } else {
@@ -650,13 +704,21 @@ fn column_widths(rows: &[(&UsageField, &str)], markers: &[&str], has_values: boo
 
 fn wrap_width_for(col: usize) -> usize {
     match col {
-        3 | 4 => WRAP_WIDTH,
+        1 | 3 => WRAP_WIDTH,
         _ => usize::MAX,
     }
 }
 
 fn format_row(cols: &[String], widths: &[usize]) -> String {
-    let last = cols.iter().rposition(|col| !col.is_empty()).unwrap_or(0);
+    format_row_n(cols, widths, true)
+}
+
+fn format_row_n(cols: &[String], widths: &[usize], trim_empty: bool) -> String {
+    let last = if trim_empty {
+        cols.iter().rposition(|col| !col.is_empty()).unwrap_or(0)
+    } else {
+        cols.len().saturating_sub(1)
+    };
     let mut line = String::new();
     for (i, col) in cols.iter().take(last + 1).enumerate() {
         if i > 0 {
@@ -692,7 +754,7 @@ fn format_wrapped_row(cols: &[String], widths: &[usize]) -> String {
         for cell_lines in &wrapped {
             parts.push(cell_lines.get(line_idx).cloned().unwrap_or_default());
         }
-        out.push_str(&format_row(&parts, widths));
+        out.push_str(&format_row_n(&parts, widths, false));
         let _ = writeln!(out);
     }
     out
@@ -726,7 +788,7 @@ fn find_split(s: &str, width: usize) -> usize {
         if count >= width {
             return last_break.unwrap_or(idx);
         }
-        if matches!(ch, ' ' | ',' | ';') {
+        if matches!(ch, ' ' | ',' | ';' | '|') {
             last_break = Some(idx + ch.len_utf8());
         }
     }
@@ -742,7 +804,7 @@ fn split_at_char(s: &str, idx: usize) -> (&str, &str) {
 }
 
 fn trim_wrap_edge(s: &str) -> &str {
-    s.trim_matches(|c: char| matches!(c, ' ' | ',' | ';'))
+    s.trim_matches(|c: char| matches!(c, ' ' | ',' | ';' | '|'))
 }
 
 fn quote_value(value: &str) -> String {
@@ -756,20 +818,6 @@ fn display_default(default: &Option<String>) -> String {
     }
 }
 
-fn display_values(field: &UsageField) -> String {
-    if let Some(values) = &field.values {
-        return values
-            .iter()
-            .map(|value| quote_value(value))
-            .collect::<Vec<_>>()
-            .join(", ");
-    }
-    match field.typ.int_limit() {
-        Some(limit) => limit.display(),
-        None => String::new(),
-    }
-}
-
 fn syntax_notes(tree: &UsageTree) -> Vec<String> {
     let mut list = false;
     let mut map = false;
@@ -778,11 +826,9 @@ fn syntax_notes(tree: &UsageTree) -> Vec<String> {
     let mut seconds = false;
     let mut bytesize = false;
     let mut int_range = false;
-    let mut non_zero = false;
     walk_types(tree, &mut |typ| {
         if let Some(limit) = typ.int_limit() {
             int_range |= limit.is_range();
-            non_zero |= limit.excludes_zero();
         }
         list |= typ.uses_list();
         map |= typ.uses_map();
@@ -796,9 +842,6 @@ fn syntax_notes(tree: &UsageTree) -> Vec<String> {
         notes.push(
             "Integer ranges are inclusive bounds; a value outside them fails to parse.".to_string(),
         );
-    }
-    if non_zero {
-        notes.push("\"not 0\" means the parser rejects zero.".to_string());
     }
     if list {
         notes.push("Lists are comma-separated values, for example a,b,c.".to_string());

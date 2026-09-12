@@ -150,7 +150,7 @@ fn default_field_is_no_and_shown_value_is_applied() {
     let usage = Config::usage_with_prefix("TEST").unwrap();
     assert!(usage.contains(r#""gcs""#));
     assert!(usage.contains(r#""150""#));
-    assert!(usage.contains(r#""gcs", "local", "mock""#));
+    assert!(usage.contains("enum: gcs|local|mock"));
 
     clean_env();
     let config = Config::with_prefix("TEST").unwrap();
@@ -217,7 +217,7 @@ fn quoted_defaults_show_literals() {
     let usage = Config::usage_with_prefix("TEST").unwrap();
     assert!(usage.contains(r#""false""#));
     assert!(usage.contains(r#""20""#));
-    assert!(usage.contains("0..=65535"));
+    assert!(usage.contains("u16 (0..=65535)"));
     assert!(!usage.contains(r#""0..=65535""#));
 }
 
@@ -492,12 +492,21 @@ fn long_values_are_not_truncated() {
     );
 }
 
-/// Character positions of column pipes, so alignment is compared in display columns.
-fn pipe_positions(line: &str) -> Vec<usize> {
-    line.chars()
-        .enumerate()
-        .filter_map(|(idx, ch)| (ch == '|').then_some(idx))
-        .collect()
+fn column_pipe_positions(line: &str) -> Vec<usize> {
+    let chars: Vec<char> = line.chars().collect();
+    let mut pos = Vec::new();
+    let mut i = 0;
+    while i + 1 < chars.len() {
+        let spaced = i + 2 < chars.len() && chars[i + 2] == ' ';
+        let at_end = i + 2 == chars.len();
+        if chars[i] == ' ' && chars[i + 1] == '|' && (spaced || at_end) {
+            pos.push(i + 1);
+            i += 2;
+        } else {
+            i += 1;
+        }
+    }
+    pos
 }
 
 fn field_wrap_lines<'a>(usage: &'a str, name: &str) -> Vec<&'a str> {
@@ -516,15 +525,13 @@ fn field_wrap_lines<'a>(usage: &'a str, name: &str) -> Vec<&'a str> {
     out
 }
 
-fn values_cell(line: &str) -> &str {
-    line.rsplit_once(" | ")
-        .map(|(_, cell)| cell)
-        .unwrap_or(line)
+fn type_cell(line: &str) -> &str {
+    line.split(" | ").nth(1).map(str::trim).unwrap_or(line)
 }
 
 #[test]
 #[serial]
-fn wrapped_values_stay_inside_the_column() {
+fn long_enums_wrap_inside_the_type_column() {
     #[allow(non_camel_case_types)]
     #[derive(EnvStruct, Debug, Clone, PartialEq, Eq, strum::Display, strum::EnumString)]
     enum CustomField {
@@ -556,36 +563,74 @@ fn wrapped_values_stay_inside_the_column() {
         .lines()
         .find(|line| line.starts_with("VARIABLE"))
         .expect("header");
-    let header_pipes = pipe_positions(header);
+    assert!(
+        !header.contains("VALUES"),
+        "VALUES must not be a table column:\n{usage}"
+    );
+    let header_pipes = column_pipe_positions(header);
     let lines = field_wrap_lines(&usage, "TEST_CUSTOM_FIELDS");
     assert!(
         lines.len() > 1,
-        "12 values should wrap at the VALUES column width:\n{usage}"
+        "12 enum values should wrap in the TYPE column:\n{usage}"
     );
-
     for line in &lines {
         assert_eq!(
-            pipe_positions(line),
+            column_pipe_positions(line),
             header_pipes,
             "column separators must stay aligned:\n{line}\n{header}"
         );
-        let values = values_cell(line);
+        let typ = type_cell(line);
         assert!(
-            values.chars().count() <= 40,
-            "VALUES fragment longer than wrap width ({:?} has {} chars):\n{line}",
-            values,
-            values.chars().count()
+            typ.chars().count() <= 40,
+            "TYPE fragment longer than wrap width ({typ:?}):\n{line}"
         );
         assert!(
-            !values.starts_with(',')
-                && !values.ends_with(',')
-                && !values.starts_with('|')
-                && !values.ends_with('|'),
-            "wrap fragment must not start or end with a value separator: {values:?}"
+            !typ.starts_with('|') && !typ.ends_with('|'),
+            "TYPE wrap must not start or end with |: {typ:?}"
         );
     }
-    assert!(usage.contains(r#""nick", "lang""#));
-    assert!(!usage.contains(r#""nick" | "lang""#));
+    assert!(usage.contains("enum: nick|lang"));
+}
+
+#[test]
+#[serial]
+fn map_keys_are_shown_in_the_type_column() {
+    #[derive(Debug, PartialEq)]
+    struct CustomFields(std::collections::HashMap<String, u64>);
+
+    impl EnvParsePrimitive for CustomFields {
+        fn parse(val: &str) -> Result<Self, BoxError> {
+            Ok(Self(std::collections::HashMap::<String, u64>::parse(val)?))
+        }
+
+        fn usage_type() -> UsageType {
+            UsageType::Map(
+                Box::new(UsageType::String),
+                Box::new(UsageType::Integer("u64".to_string(), None)),
+            )
+        }
+
+        fn usage_values() -> Option<Vec<String>> {
+            Some(
+                ["nick", "lang", "email"]
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect(),
+            )
+        }
+    }
+
+    #[derive(EnvStruct, Debug)]
+    pub struct Config {
+        pub custom_fields: CustomFields,
+    }
+
+    let usage = Config::usage_with_prefix("ZENDESK").unwrap();
+    let table_row = usage
+        .lines()
+        .find(|line| line.starts_with("ZENDESK_CUSTOM_FIELDS |"))
+        .expect("table row");
+    assert!(table_row.contains("map<string,u64>: nick|lang|email"));
 }
 
 #[test]
@@ -596,24 +641,20 @@ fn usage_snapshot_groups_and_conditions() {
         &usage,
         r#"Environment variables
 
-REQUIRED=yes: must be set.
-DEFAULT: value used when the variable is unset.
-—: no default.
-
 Byte sizes accept values such as 4MB and 10MiB.
 
-VARIABLE                                | TYPE     | REQUIRED | DEFAULT         | VALUES
-----------------------------------------+----------+----------+-----------------+-----------------------
-AVATARDB_IMAGE_SIZE_LIMIT               | bytesize | no       | "4MB"
-AVATARDB_IMAGE_WIDTH                    | u32      | no       | "150"
-AVATARDB_NSFW_SCORE_MAX                 | f64      | no       | "0.9"
-AVATARDB_MODE                           | enum     | no       | "gcs"           | "gcs", "local", "mock"
-[used when AVATARDB_MODE=gcs (default)] |          | no
-  AVATARDB_BUCKET_NAME                  | string   | yes      | —
-  AVATARDB_DIGEST_SALT                  | string   | no       | "squibblefluff"
-[used when AVATARDB_MODE=local]         |          | no
-  AVATARDB_LOCAL_DATA_DIR               | string   | yes      | —
-[used when AVATARDB_MODE=mock]          |          | no
+VARIABLE                                | TYPE                 | REQUIRED | DEFAULT
+----------------------------------------+----------------------+----------+----------------
+AVATARDB_IMAGE_SIZE_LIMIT               | bytesize             | no       | "4MB"
+AVATARDB_IMAGE_WIDTH                    | u32                  | no       | "150"
+AVATARDB_NSFW_SCORE_MAX                 | f64                  | no       | "0.9"
+AVATARDB_MODE                           | enum: gcs|local|mock | no       | "gcs"
+[used when AVATARDB_MODE=gcs (default)] |                      | no
+  AVATARDB_BUCKET_NAME                  | string               | yes      | —
+  AVATARDB_DIGEST_SALT                  | string               | no       | "squibblefluff"
+[used when AVATARDB_MODE=local]         |                      | no
+  AVATARDB_LOCAL_DATA_DIR               | string               | yes      | —
+[used when AVATARDB_MODE=mock]          |                      | no
 "#,
     );
 }
@@ -636,9 +677,8 @@ fn integer_range_is_shown_and_enforced() {
 
     let usage = Config::usage_with_prefix("TEST").unwrap();
     assert_eq!(field.typ.display(), "u16");
-    assert!(usage.contains("u16"));
+    assert!(usage.contains("u16 (0..=65535)"));
     assert!(!usage.contains("integer"));
-    assert!(usage.contains("0..=65535"));
 
     clean_env();
     env::set_var("TEST_IMAGE_HEIGHT", "65536");
@@ -669,6 +709,57 @@ fn optional_integer_keeps_its_range() {
     assert_eq!(
         field.typ.int_limit().map(|limit| limit.display()),
         Some("0..=255".to_string())
+    );
+}
+
+#[test]
+#[serial]
+fn nested_struct_rows_sort_with_sibling_leaves() {
+    #[derive(EnvStruct, Debug)]
+    pub struct Config {
+        #[env(default = "false")]
+        pub skip_worker: bool,
+        pub public_csrf: Csrf,
+        pub account_session: Session,
+        pub account_session_refresh_ttl: String,
+    }
+
+    #[derive(EnvStruct, Debug)]
+    pub struct Csrf {
+        #[env(default = "_csrf")]
+        pub cookie_name: String,
+    }
+
+    #[derive(EnvStruct, Debug)]
+    pub struct Session {
+        pub cookie_name: String,
+        pub gcm_secret: String,
+    }
+
+    let usage = Config::usage_with_prefix("APP").unwrap();
+    let names: Vec<&str> = usage
+        .lines()
+        .filter_map(|line| {
+            line.split(" | ")
+                .next()
+                .map(str::trim)
+                .filter(|name| name.starts_with("APP_"))
+        })
+        .collect();
+    let pos = |name: &str| {
+        names
+            .iter()
+            .position(|n| *n == name)
+            .unwrap_or_else(|| panic!("{name} missing in {names:?}"))
+    };
+    let cookie = pos("APP_ACCOUNT_SESSION_COOKIE_NAME");
+    let secret = pos("APP_ACCOUNT_SESSION_GCM_SECRET");
+    let refresh = pos("APP_ACCOUNT_SESSION_REFRESH_TTL");
+    let csrf = pos("APP_PUBLIC_CSRF_COOKIE_NAME");
+    let skip = pos("APP_SKIP_WORKER");
+    assert!(
+        cookie < secret && secret < refresh && refresh + 1 == csrf && csrf + 1 == skip,
+        "nested structs should sort with sibling leaves by env name, got {names:?}"
     );
 }
 
@@ -810,7 +901,9 @@ fn non_zero_reports_the_zero_exclusion() {
     );
 
     let usage = Config::usage_with_prefix("TEST").unwrap();
-    assert!(usage.contains(r#""not 0" means the parser rejects zero."#));
+    assert!(usage.contains("NonZeroUsize"));
+    assert!(usage.contains("NonZeroI8 (-128..=127)"));
+    assert!(!usage.contains("not 0"));
 
     clean_env();
     env::set_var("TEST_WORKERS", "0");
