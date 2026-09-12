@@ -33,15 +33,11 @@ fn find_field<'a>(items: &'a [UsageItem], name: &str) -> Option<&'a UsageField> 
     None
 }
 
-/// REQUIRED cell of a group marker line, as printed in the table.
-fn group_required<'a>(usage: &'a str, marker: &str) -> &'a str {
-    usage
-        .lines()
-        .find(|line| line.starts_with(marker))
-        .unwrap_or_else(|| panic!("no group line {marker}"))
-        .split_whitespace()
-        .last()
-        .unwrap()
+fn assert_group_marker(usage: &str, marker: &str) {
+    assert!(
+        usage.lines().any(|line| line == marker),
+        "missing bare group marker {marker}:\n{usage}"
+    );
 }
 
 fn find_group<'a>(items: &'a [UsageItem], title: &str) -> Option<&'a UsageGroup> {
@@ -105,7 +101,7 @@ pub struct ImageConfig {
 
 #[test]
 #[serial]
-fn required_field_is_yes_and_missing_fails_parse() {
+fn required_field_has_no_default_and_missing_fails_parse() {
     #[derive(EnvStruct, Debug)]
     pub struct Config {
         pub name: String,
@@ -124,7 +120,7 @@ fn required_field_is_yes_and_missing_fails_parse() {
 
 #[test]
 #[serial]
-fn default_field_is_no_and_shown_value_is_applied() {
+fn default_field_is_optional_and_shown_value_is_applied() {
     #[derive(EnvStruct, Debug, PartialEq)]
     pub struct Config {
         #[env(default = "gcs")]
@@ -160,7 +156,7 @@ fn default_field_is_no_and_shown_value_is_applied() {
 
 #[test]
 #[serial]
-fn optional_without_default_is_no_and_stays_unset() {
+fn optional_without_default_stays_unset() {
     #[derive(EnvStruct, Debug, PartialEq)]
     pub struct Config {
         pub name: Option<String>,
@@ -196,7 +192,8 @@ fn empty_default_differs_from_missing_default() {
     let usage = Config::usage_with_prefix("TEST").unwrap();
     assert!(usage.contains(r#"| """#));
     assert!(usage.contains("none"));
-    assert!(!usage.contains('—'));
+    assert!(!field_wrap_lines(&usage, "TEST_EMPTY")[0].contains('—'));
+    assert!(!field_wrap_lines(&usage, "TEST_MISSING")[0].contains('—'));
 
     clean_env();
     let config = Config::with_prefix("TEST").unwrap();
@@ -238,10 +235,7 @@ fn default_mode_optional_group_is_documented_but_not_parser_required() {
     assert_eq!(bucket.default, None);
 
     let usage = AvatarConfig::usage_with_prefix("AVATARDB").unwrap();
-    assert_eq!(
-        group_required(&usage, "[used when AVATARDB_MODE=gcs (default)]"),
-        "no"
-    );
+    assert_group_marker(&usage, "[used when AVATARDB_MODE=gcs (default)]");
 
     clean_env();
     let config = AvatarConfig::with_prefix("AVATARDB").unwrap();
@@ -286,7 +280,7 @@ fn optional_group_omit_and_partial_match_activation() {
     assert!(!find_field(&db.items, "TEST_DB_POOL").unwrap().required);
 
     let usage = Config::usage_with_prefix("TEST").unwrap();
-    assert_eq!(group_required(&usage, "[Db]"), "no");
+    assert_group_marker(&usage, "[Db]");
 
     clean_env();
     let omitted = Config::with_prefix("TEST").unwrap();
@@ -331,7 +325,7 @@ fn optional_group_defaults_do_not_create_the_group() {
     assert_eq!(field.default.as_deref(), Some(""));
 
     let usage = Config::usage_with_prefix("TEST").unwrap();
-    assert_eq!(group_required(&usage, "[Mock]"), "no");
+    assert_group_marker(&usage, "[Mock]");
 
     clean_env();
     let config = Config::with_prefix("TEST").unwrap();
@@ -358,7 +352,7 @@ fn optional_group_without_condition_keeps_path() {
     }
 
     let usage = Config::usage_with_prefix("APP").unwrap();
-    assert_eq!(group_required(&usage, "[Doom → Remote]"), "no");
+    assert_group_marker(&usage, "[Doom → Remote]");
     assert!(usage.contains("APP_DOOM_REMOTE_DSN"));
     assert!(!usage.contains("[used when"));
 }
@@ -392,10 +386,7 @@ fn used_if_does_not_weaken_parser_requirements() {
     assert!(api_key.required);
 
     let usage = Config::usage_with_prefix("EMAILER").unwrap();
-    assert_eq!(
-        group_required(&usage, "[used when EMAILER_MOCK=false (default)]"),
-        "yes"
-    );
+    assert_group_marker(&usage, "[used when EMAILER_MOCK=false (default)]");
 
     clean_env();
     env::set_var("EMAILER_MOCK", "true");
@@ -487,6 +478,11 @@ fn long_values_are_not_truncated() {
         compact.contains("https://very-long.example.com/path/that/should/remain/complete/in/usage")
     );
     assert!(!usage.contains('…'));
+    let lines = field_wrap_lines(&usage, "TEST_URL");
+    assert!(lines.len() > 1, "long defaults must still wrap: {usage}");
+    for line in lines {
+        assert!(line.split(" | ").nth(2).unwrap().chars().count() <= 40);
+    }
     assert!(
         usage.lines().all(|line| line == line.trim_end()),
         "usage output must not have trailing whitespace"
@@ -527,7 +523,7 @@ fn field_wrap_lines<'a>(usage: &'a str, name: &str) -> Vec<&'a str> {
 }
 
 fn type_cell(line: &str) -> &str {
-    line.split(" | ").nth(1).map(str::trim).unwrap_or(line)
+    line.split(" |").nth(1).map(str::trim).unwrap_or(line)
 }
 
 #[test]
@@ -647,7 +643,7 @@ fn map_keys_are_shown_in_the_type_column() {
     assert!(lines.len() > 1, "11 map keys should wrap:\n{usage}");
     for line in &lines {
         assert_eq!(column_pipe_positions(line), column_pipe_positions(header));
-        assert_eq!(line.matches('|').count(), 3);
+        assert_eq!(line.matches('|').count(), 2);
         assert!(type_cell(line).chars().count() <= 40);
     }
     let typ = lines
@@ -700,20 +696,22 @@ fn usage_snapshot_groups_and_conditions() {
         &usage,
         r#"Environment variables
 
+—: must be set.
+none: optional, unset by default.
 Byte sizes accept values such as 4MB and 10MiB.
 
-VARIABLE                                | TYPE                   | REQUIRED | DEFAULT
-----------------------------------------+------------------------+----------+----------------
-AVATARDB_IMAGE_SIZE_LIMIT               | bytesize               | no       | "4MB"
-AVATARDB_IMAGE_WIDTH                    | u32                    | no       | "150"
-AVATARDB_NSFW_SCORE_MAX                 | f64                    | no       | "0.9"
-AVATARDB_MODE                           | enum: gcs, local, mock | no       | "gcs"
-[used when AVATARDB_MODE=gcs (default)] |                        | no
-  AVATARDB_BUCKET_NAME                  | string                 | yes      | —
-  AVATARDB_DIGEST_SALT                  | string                 | no       | "squibblefluff"
-[used when AVATARDB_MODE=local]         |                        | no
-  AVATARDB_LOCAL_DATA_DIR               | string                 | yes      | —
-[used when AVATARDB_MODE=mock]          |                        | no
+VARIABLE                                | TYPE                   | DEFAULT
+----------------------------------------+------------------------+----------------
+AVATARDB_IMAGE_SIZE_LIMIT               | bytesize               | "4MB"
+AVATARDB_IMAGE_WIDTH                    | u32                    | "150"
+AVATARDB_NSFW_SCORE_MAX                 | f64                    | "0.9"
+AVATARDB_MODE                           | enum: gcs, local, mock | "gcs"
+[used when AVATARDB_MODE=gcs (default)]
+  AVATARDB_BUCKET_NAME                  | string                 | —
+  AVATARDB_DIGEST_SALT                  | string                 | "squibblefluff"
+[used when AVATARDB_MODE=local]
+  AVATARDB_LOCAL_DATA_DIR               | string                 | —
+[used when AVATARDB_MODE=mock]
 "#,
     );
 }
@@ -1061,7 +1059,8 @@ fn default_note_is_shown_in_parentheses_and_does_not_parse() {
     let usage = Config::usage_with_prefix("APP").unwrap();
     assert!(usage.contains("(physical CPU count)"));
     assert!(!usage.contains("\"physical CPU count\""));
-    assert!(!usage.contains("none"));
+    let row = field_wrap_lines(&usage, "APP_WORKER_COUNT")[0];
+    assert!(!row.contains("none"));
 
     clean_env();
     assert_eq!(
@@ -1080,6 +1079,15 @@ fn optional_without_default_prints_none_required_prints_em_dash() {
     }
 
     let usage = Config::usage_with_prefix("APP").unwrap();
+    assert!(usage.contains("—: must be set.\nnone: optional, unset by default."));
+    let header = usage
+        .lines()
+        .find(|line| line.starts_with("VARIABLE"))
+        .unwrap();
+    assert_eq!(
+        header.split(" | ").map(str::trim).collect::<Vec<_>>(),
+        ["VARIABLE", "TYPE", "DEFAULT"]
+    );
     let dsn = usage
         .lines()
         .find(|line| line.starts_with("APP_DSN"))
@@ -1105,6 +1113,28 @@ fn optional_without_default_prints_none_required_prints_em_dash() {
 
 #[test]
 #[serial]
+fn required_field_with_default_note_still_marks_the_value_as_required() {
+    #[derive(EnvStruct, Debug)]
+    struct Config {
+        #[env(default_note = "physical CPU count")]
+        worker_count: usize,
+    }
+
+    let usage = Config::usage_with_prefix("APP").unwrap();
+    let row = field_wrap_lines(&usage, "APP_WORKER_COUNT")[0];
+    assert_eq!(
+        row.split(" | ").nth(2).unwrap().trim(),
+        "— (physical CPU count)"
+    );
+
+    clean_env();
+    assert!(
+        matches!(Config::with_prefix("APP"), Err(EnvStructError::MissingEnvVar(name)) if name == "APP_WORKER_COUNT")
+    );
+}
+
+#[test]
+#[serial]
 fn usage_snapshot_secret_default_note_and_none() {
     #[derive(EnvStruct, Debug)]
     pub struct Config {
@@ -1122,15 +1152,17 @@ fn usage_snapshot_secret_default_note_and_none() {
         &usage,
         r#"Environment variables
 
+—: must be set.
+none: optional, unset by default.
 A * after a name marks a secret.
 Integer ranges are inclusive bounds; a value outside them fails to parse.
 
-VARIABLE         | TYPE            | REQUIRED | DEFAULT
------------------+-----------------+----------+---------------------
-APP_APP_NAME     | string          | no       | none
-APP_DSN *        | string          | yes      | —
-APP_PORT         | u16 (0..=65535) | no       | "8080"
-APP_WORKER_COUNT | usize           | no       | (physical CPU count)
+VARIABLE         | TYPE            | DEFAULT
+-----------------+-----------------+---------------------
+APP_APP_NAME     | string          | none
+APP_DSN *        | string          | —
+APP_PORT         | u16 (0..=65535) | "8080"
+APP_WORKER_COUNT | usize           | (physical CPU count)
 "#,
     );
 }

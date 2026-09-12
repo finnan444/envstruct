@@ -90,7 +90,7 @@ fn main() -> Result<(), envstruct::EnvStructError> {
 - `default_note`: Runtime-computed default shown in the DEFAULT column in parentheses, as in `#[env(default_note = "physical CPU count")]`. Cannot be combined with `default`.
 - `tag`: On an enum, the variable that selects the variant, as in `#[env(tag = "mode")]`. On a variant of such an enum, `name` renames the value that selects it and `flatten` drops its segment from the names of its payload.
 
-DEFAULT is a quoted literal, a note in parentheses for a runtime default, `none` when an optional variable may be omitted, or — when a required variable has no default.
+DEFAULT is a quoted literal, a note in parentheses for a runtime default, `none` when an optional variable may be omitted, or `—` when a required variable has no default. A required field with `default_note` shows `— (note)` because the note does not supply a parser default.
 
 ## Enums with data
 
@@ -129,12 +129,15 @@ pub struct DeployConfig {
 With the prefix `DEPLOY`, `DEPLOY_MODE` selects the variant:
 
 ```text
-VARIABLE                                    | TYPE   | REQUIRED | DEFAULT
---------------------------------------------+--------+----------+--------
-DEPLOY_MODE                                 | enum: local, remote | no  | "local"
-[selected when DEPLOY_MODE=local (default)] |                    | yes
-[selected when DEPLOY_MODE=remote]          |                    | yes
-  DEPLOY_REMOTE_DSN                         | string             | yes | —
+—: must be set.
+none: optional, unset by default.
+
+VARIABLE                                  | TYPE                | DEFAULT
+------------------------------------------+---------------------+--------
+DEPLOY_MODE                               | enum: local, remote | "local"
+[selected when DEPLOY_MODE=local (default)]
+[selected when DEPLOY_MODE=remote]
+  DEPLOY_REMOTE_DSN                       | string              | —
 ```
 
 - A variant is a unit variant or a newtype variant holding one configuration; other shapes are rejected at compile time.

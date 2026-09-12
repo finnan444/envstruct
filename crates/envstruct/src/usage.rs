@@ -433,8 +433,6 @@ enum UsageBlock {
     Fields(Vec<UsageField>),
     Section {
         marker: String,
-        /// Whether the group itself must be present, shown in the REQUIRED column.
-        required: bool,
         fields: Vec<UsageField>,
     },
 }
@@ -558,7 +556,6 @@ fn emit_group(group: UsageGroup, parent_path: &str, blocks: &mut Vec<UsageBlock>
         let (fields, children) = split_items(&group.items);
         blocks.push(UsageBlock::Section {
             marker: section_marker(&group, &path),
-            required: !group.optional,
             fields,
         });
         for child in children {
@@ -632,13 +629,8 @@ fn render_blocks(out: &mut String, blocks: &[UsageBlock]) {
     for block in blocks {
         let (fields, indent) = match block {
             UsageBlock::Fields(fields) => (fields, ""),
-            UsageBlock::Section {
-                marker,
-                required,
-                fields,
-            } => {
-                out.push_str(&format_row(&section_columns(marker, *required), &widths));
-                let _ = writeln!(out);
+            UsageBlock::Section { marker, fields } => {
+                let _ = writeln!(out, "{marker}");
                 (fields, INDENT)
             }
         };
@@ -662,25 +654,10 @@ fn table_rows(blocks: &[UsageBlock]) -> Vec<(&UsageField, &'static str)> {
     rows
 }
 
-/// A group marker occupies the VARIABLE column; REQUIRED then applies to the group itself.
-fn section_columns(marker: &str, required: bool) -> Vec<String> {
-    vec![
-        marker.to_string(),
-        String::new(),
-        if required {
-            "yes".to_string()
-        } else {
-            "no".to_string()
-        },
-        String::new(),
-    ]
-}
-
 fn header_cols() -> Vec<String> {
     vec![
         "VARIABLE".to_string(),
         "TYPE".to_string(),
-        "REQUIRED".to_string(),
         "DEFAULT".to_string(),
     ]
 }
@@ -689,11 +666,6 @@ fn field_columns(field: &UsageField, indent: &str) -> Vec<String> {
     vec![
         field_name_cell(field, indent),
         type_cell(field),
-        if field.required {
-            "yes".to_string()
-        } else {
-            "no".to_string()
-        },
         display_default(field),
     ]
 }
@@ -747,7 +719,7 @@ fn column_widths(rows: &[(&UsageField, &str)], markers: &[&str]) -> Vec<usize> {
 
 fn wrap_width_for(col: usize) -> usize {
     match col {
-        1 | 3 => WRAP_WIDTH,
+        1 | 2 => WRAP_WIDTH,
         _ => usize::MAX,
     }
 }
@@ -858,7 +830,11 @@ fn display_default(field: &UsageField) -> String {
     if let Some(value) = &field.default {
         quote_value(value)
     } else if let Some(note) = &field.default_note {
-        format!("({note})")
+        if field.required {
+            format!("{NO_DEFAULT} ({note})")
+        } else {
+            format!("({note})")
+        }
     } else if field.required {
         NO_DEFAULT.to_string()
     } else {
@@ -885,7 +861,10 @@ fn syntax_notes(tree: &UsageTree) -> Vec<String> {
         seconds |= typ.uses_seconds();
         bytesize |= typ.uses_bytesize();
     });
-    let mut notes = Vec::new();
+    let mut notes = vec![
+        "—: must be set.".to_string(),
+        "none: optional, unset by default.".to_string(),
+    ];
     if items_have_secret(&tree.items) {
         notes.push("A * after a name marks a secret.".to_string());
     }
