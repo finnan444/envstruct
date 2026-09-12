@@ -125,11 +125,12 @@ pub struct DeployConfig {
 With the prefix `DEPLOY`, `DEPLOY_MODE` selects the variant:
 
 ```text
-VARIABLE                                     TYPE     REQUIRED  DEFAULT  VALUES
-DEPLOY_MODE                                  enum     no        local    local | remote
-[selected when DEPLOY_MODE=local (default)]           yes
-[selected when DEPLOY_MODE=remote]                    yes
-  DEPLOY_REMOTE_DSN                          string   yes       —        —
+VARIABLE                                    | TYPE   | REQUIRED | DEFAULT | VALUES
+--------------------------------------------+--------+----------+---------+-----------------
+DEPLOY_MODE                                 | enum   | no       | local   | local | remote
+[selected when DEPLOY_MODE=local (default)] |        | yes
+[selected when DEPLOY_MODE=remote]          |        | yes
+  DEPLOY_REMOTE_DSN                         | string | yes      | —       | —
 ```
 
 - A variant is a unit variant or a newtype variant holding one configuration; other shapes are rejected at compile time.

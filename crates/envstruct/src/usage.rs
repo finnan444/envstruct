@@ -403,6 +403,8 @@ const NO_DEFAULT: &str = "—";
 const WRAP_WIDTH: usize = 40;
 /// Rows of a conditional group are indented under its marker line.
 const INDENT: &str = "  ";
+const COL_SEP: &str = " | ";
+const HEADER_RULE_SEP: &str = "-+-";
 
 enum UsageBlock {
     Fields(Vec<UsageField>),
@@ -418,43 +420,11 @@ fn render_usage(tree: &UsageTree) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "Environment variables");
     let _ = writeln!(out);
-    let _ = writeln!(
-        out,
-        "REQUIRED=yes means an explicit value is needed within the group's parsing scope."
-    );
-    let _ = writeln!(
-        out,
-        "DEFAULT is used when omitted; {NO_DEFAULT} = no default; \"\" = empty string."
-    );
-    let _ = writeln!(
-        out,
-        "All groups are shown, regardless of the current environment."
-    );
+    let _ = writeln!(out, "REQUIRED=yes: must be set.");
+    let _ = writeln!(out, "DEFAULT: value used when the variable is unset.");
+    let _ = writeln!(out, "{NO_DEFAULT}: no default. \"\": an empty string.");
 
-    let (blocks, legend) = collect_blocks(tree);
-    if legend.used_if {
-        let _ = writeln!(
-            out,
-            "[used when NAME=value] is application usage; the parser does not enforce it."
-        );
-    }
-    if legend.selected_if {
-        let _ = writeln!(
-            out,
-            "[selected when NAME=value] is checked by the parser: only the selected group is parsed."
-        );
-    }
-    if legend.optional {
-        let _ = writeln!(
-            out,
-            "REQUIRED on a group line is about the group: no = it may be omitted entirely,"
-        );
-        let _ = writeln!(
-            out,
-            "but any explicit member activates parsing; defaults alone do not."
-        );
-    }
-
+    let blocks = collect_blocks(tree);
     let syntax = syntax_notes(tree);
     if !syntax.is_empty() {
         let _ = writeln!(out);
@@ -494,47 +464,21 @@ fn split_items(items: &[UsageItem]) -> (Vec<UsageField>, Vec<UsageGroup>) {
     (fields, groups)
 }
 
-/// Explanatory lines the table needs, decided by what the tree contains.
-#[derive(Default)]
-struct Legend {
-    optional: bool,
-    used_if: bool,
-    selected_if: bool,
-}
-
-impl Legend {
-    fn note(&mut self, group: &UsageGroup) {
-        self.optional |= group.optional;
-        match &group.used_if {
-            Some(used_if) if used_if.enforced => self.selected_if = true,
-            Some(_) => self.used_if = true,
-            None => {}
-        }
-    }
-}
-
-fn collect_blocks(tree: &UsageTree) -> (Vec<UsageBlock>, Legend) {
+fn collect_blocks(tree: &UsageTree) -> Vec<UsageBlock> {
     let mut blocks = Vec::new();
-    let mut legend = Legend::default();
     let (fields, groups) = split_items(&tree.items);
     if !fields.is_empty() {
         blocks.push(UsageBlock::Fields(fields));
     }
     for group in &groups {
-        collect_group(group, "", &mut blocks, &mut legend);
+        collect_group(group, "", &mut blocks);
     }
-    (blocks, legend)
+    blocks
 }
 
-fn collect_group(
-    group: &UsageGroup,
-    parent_path: &str,
-    blocks: &mut Vec<UsageBlock>,
-    legend: &mut Legend,
-) {
+fn collect_group(group: &UsageGroup, parent_path: &str, blocks: &mut Vec<UsageBlock>) {
     let path = group_path(parent_path, &group.title);
     let (fields, children) = split_items(&group.items);
-    legend.note(group);
     if group.optional || group.used_if.is_some() {
         blocks.push(UsageBlock::Section {
             marker: section_marker(group, &path),
@@ -545,7 +489,7 @@ fn collect_group(
         blocks.push(UsageBlock::Fields(fields));
     }
     for child in &children {
-        collect_group(child, &path, blocks, legend);
+        collect_group(child, &path, blocks);
     }
 }
 
@@ -587,6 +531,8 @@ fn render_blocks(out: &mut String, blocks: &[UsageBlock]) {
     let widths = column_widths(&rows, &markers, has_values);
     if !rows.is_empty() {
         out.push_str(&format_row(&header_cols(has_values), &widths));
+        let _ = writeln!(out);
+        out.push_str(&format_header_rule(&widths));
         let _ = writeln!(out);
     }
 
@@ -707,10 +653,11 @@ fn wrap_width_for(col: usize) -> usize {
 }
 
 fn format_row(cols: &[String], widths: &[usize]) -> String {
+    let last = cols.iter().rposition(|col| !col.is_empty()).unwrap_or(0);
     let mut line = String::new();
-    for (i, col) in cols.iter().enumerate() {
+    for (i, col) in cols.iter().take(last + 1).enumerate() {
         if i > 0 {
-            line.push_str("  ");
+            line.push_str(COL_SEP);
         }
         let pad = widths[i].saturating_sub(col.chars().count());
         line.push_str(col);
@@ -719,6 +666,14 @@ fn format_row(cols: &[String], widths: &[usize]) -> String {
         }
     }
     line.trim_end().to_string()
+}
+
+fn format_header_rule(widths: &[usize]) -> String {
+    widths
+        .iter()
+        .map(|width| "-".repeat(*width))
+        .collect::<Vec<_>>()
+        .join(HEADER_RULE_SEP)
 }
 
 fn format_wrapped_row(cols: &[String], widths: &[usize]) -> String {

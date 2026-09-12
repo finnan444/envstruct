@@ -218,7 +218,6 @@ fn default_mode_optional_group_is_documented_but_not_parser_required() {
         group_required(&usage, "[used when AVATARDB_MODE=gcs (default)]"),
         "no"
     );
-    assert!(usage.contains("the parser does not enforce it"));
 
     clean_env();
     let config = AvatarConfig::with_prefix("AVATARDB").unwrap();
@@ -309,7 +308,6 @@ fn optional_group_defaults_do_not_create_the_group() {
 
     let usage = Config::usage_with_prefix("TEST").unwrap();
     assert_eq!(group_required(&usage, "[Mock]"), "no");
-    assert!(usage.contains("defaults alone do not"));
 
     clean_env();
     let config = Config::with_prefix("TEST").unwrap();
@@ -374,7 +372,6 @@ fn used_if_does_not_weaken_parser_requirements() {
         group_required(&usage, "[used when EMAILER_MOCK=false (default)]"),
         "yes"
     );
-    assert!(usage.contains("the parser does not enforce it"));
 
     clean_env();
     env::set_var("EMAILER_MOCK", "true");
@@ -458,7 +455,10 @@ fn long_values_are_not_truncated() {
     }
 
     let usage = Config::usage_with_prefix("TEST").unwrap();
-    let compact: String = usage.chars().filter(|c| !c.is_whitespace()).collect();
+    let compact: String = usage
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '|')
+        .collect();
     assert!(
         compact.contains("https://very-long.example.com/path/that/should/remain/complete/in/usage")
     );
@@ -477,26 +477,24 @@ fn usage_snapshot_groups_and_conditions() {
         &usage,
         r#"Environment variables
 
-REQUIRED=yes means an explicit value is needed within the group's parsing scope.
-DEFAULT is used when omitted; — = no default; "" = empty string.
-All groups are shown, regardless of the current environment.
-[used when NAME=value] is application usage; the parser does not enforce it.
-REQUIRED on a group line is about the group: no = it may be omitted entirely,
-but any explicit member activates parsing; defaults alone do not.
+REQUIRED=yes: must be set.
+DEFAULT: value used when the variable is unset.
+—: no default. "": an empty string.
 
 Byte sizes accept values such as 4MB and 10MiB.
 
-VARIABLE                                 TYPE      REQUIRED  DEFAULT        VALUES
-AVATARDB_IMAGE_SIZE_LIMIT                bytesize  no        4MB            —
-AVATARDB_IMAGE_WIDTH                     u32       no        150            —
-AVATARDB_NSFW_SCORE_MAX                  f64       no        0.9            —
-AVATARDB_MODE                            enum      no        gcs            gcs | local | mock
-[used when AVATARDB_MODE=gcs (default)]            no
-  AVATARDB_BUCKET_NAME                   string    yes       —              —
-  AVATARDB_DIGEST_SALT                   string    no        squibblefluff  —
-[used when AVATARDB_MODE=local]                    no
-  AVATARDB_LOCAL_DATA_DIR                string    yes       —              —
-[used when AVATARDB_MODE=mock]                     no
+VARIABLE                                | TYPE     | REQUIRED | DEFAULT       | VALUES
+----------------------------------------+----------+----------+---------------+-------------------
+AVATARDB_IMAGE_SIZE_LIMIT               | bytesize | no       | 4MB           | —
+AVATARDB_IMAGE_WIDTH                    | u32      | no       | 150           | —
+AVATARDB_NSFW_SCORE_MAX                 | f64      | no       | 0.9           | —
+AVATARDB_MODE                           | enum     | no       | gcs           | gcs | local | mock
+[used when AVATARDB_MODE=gcs (default)] |          | no
+  AVATARDB_BUCKET_NAME                  | string   | yes      | —             | —
+  AVATARDB_DIGEST_SALT                  | string   | no       | squibblefluff | —
+[used when AVATARDB_MODE=local]         |          | no
+  AVATARDB_LOCAL_DATA_DIR               | string   | yes      | —             | —
+[used when AVATARDB_MODE=mock]          |          | no
 "#,
     );
 }
