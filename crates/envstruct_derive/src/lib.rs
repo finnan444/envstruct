@@ -105,10 +105,11 @@ impl EnvStructVariantReceiver {
 
 /// Receiver for the fields of the `EnvStruct`.
 #[derive(Debug, FromField)]
-#[darling(attributes(env))]
+#[darling(attributes(env), forward_attrs(doc))]
 struct EnvStructFieldReceiver {
     ident: Option<syn::Ident>,
     ty: syn::Type,
+    attrs: Vec<syn::Attribute>,
     name: Option<String>,
     default: Option<DefaultAttr>,
     with: Option<syn::Expr>,
@@ -126,6 +127,34 @@ struct EnvStructFieldReceiver {
 }
 
 impl EnvStructFieldReceiver {
+    fn description_expr(&self) -> proc_macro2::TokenStream {
+        let lines: Vec<_> = self
+            .attrs
+            .iter()
+            .filter_map(|attr| {
+                let syn::Meta::NameValue(meta) = &attr.meta else {
+                    return None;
+                };
+                let syn::Expr::Lit(expr) = &meta.value else {
+                    return None;
+                };
+                let syn::Lit::Str(value) = &expr.lit else {
+                    return None;
+                };
+                Some(value.value())
+            })
+            .collect();
+        if lines.is_empty() {
+            return quote!(None);
+        }
+        let description = lines
+            .iter()
+            .map(|line| line.strip_prefix(' ').unwrap_or(line))
+            .collect::<Vec<_>>()
+            .join("\n");
+        quote!(Some(#description.to_string()))
+    }
+
     /// Generates a token stream for the field name or index.
     pub fn name_exr(&self, index: usize) -> proc_macro2::TokenStream {
         self.ident
@@ -482,6 +511,7 @@ impl EnvStructInputReceiver {
                 let flatten = field.flatten;
                 let inline = field.inline;
                 let secret = field.secret;
+                let description = field.description_expr();
                 let title_expr = match &field.title {
                     Some(title) => quote!(Some(#title.to_string())),
                     None => quote!(None),
@@ -502,6 +532,7 @@ impl EnvStructInputReceiver {
                             used_if: #used_if,
                             secret: #secret,
                             default_note: #default_note_expr,
+                            description: #description,
                         },
                     )
                 }

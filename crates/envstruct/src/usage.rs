@@ -160,6 +160,8 @@ pub enum UsageItem {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UsageField {
     pub name: String,
+    /// Field doc-comment, preserved as Markdown for detailed output.
+    pub description: Option<String>,
     pub typ: UsageType,
     pub required: bool,
     pub default: Option<String>,
@@ -174,6 +176,10 @@ pub struct UsageField {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UsageGroup {
     pub title: String,
+    /// Doc-comment on the field containing this group.
+    pub description: Option<String>,
+    /// Preserve an inlined field's description without adding a section to the table.
+    pub inline: bool,
     pub optional: bool,
     pub used_if: Option<UsageUsedIf>,
     pub items: Vec<UsageItem>,
@@ -211,6 +217,7 @@ impl UsageTree {
             kind: UsageTreeKind::Leaf,
             items: vec![UsageItem::Field(UsageField {
                 name: name.into(),
+                description: None,
                 typ,
                 required,
                 default,
@@ -233,14 +240,18 @@ impl UsageTree {
     /// defaults. Secrets never include a value. Conditional groups are active only when
     /// their condition matches the switch default and their parent is active. Optional
     /// groups without a condition stay commented to avoid enabling them accidentally.
+    /// Field doc-comments are printed above assignments or groups, preserving Markdown.
     ///
     /// `used_if` only describes application usage; it does not relax parser requirements.
     /// Empty assignments are placeholders, and types such as `String` accept them.
     ///
     /// ```no_run
     /// # use envstruct::prelude::*;
-    /// # #[derive(EnvStruct)]
-    /// # struct Config { port: u16 }
+    /// #[derive(EnvStruct)]
+    /// struct Config {
+    ///     /// Port accepting public API requests.
+    ///     port: u16,
+    /// }
     /// let example = Config::get_usage_tree("APP", None)?.to_env_example();
     /// std::fs::write(".env.example", example)?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -260,6 +271,7 @@ fn render_env_items(items: &[UsageItem], active: bool, output: &mut String) {
     for item in items {
         match item {
             UsageItem::Field(field) => {
+                render_env_description(field.description.as_deref(), output);
                 if !active || !field.required {
                     output.push_str("# ");
                 }
@@ -273,6 +285,11 @@ fn render_env_items(items: &[UsageItem], active: bool, output: &mut String) {
             UsageItem::Group(group) => {
                 if !output.is_empty() && !output.ends_with("\n\n") {
                     output.push('\n');
+                }
+                render_env_description(group.description.as_deref(), output);
+                if group.inline {
+                    render_env_items(&group.items, active, output);
+                    continue;
                 }
                 let selected = if let Some(condition) = &group.used_if {
                     let _ = writeln!(
@@ -292,6 +309,18 @@ fn render_env_items(items: &[UsageItem], active: bool, output: &mut String) {
                 if !output.ends_with("\n\n") {
                     output.push('\n');
                 }
+            }
+        }
+    }
+}
+
+fn render_env_description(description: Option<&str>, output: &mut String) {
+    if let Some(description) = description {
+        for line in description.lines() {
+            if line.is_empty() {
+                output.push_str("#\n");
+            } else {
+                let _ = writeln!(output, "# {line}");
             }
         }
     }
@@ -339,19 +368,32 @@ pub struct FieldUsageMeta {
     pub used_if: Option<UsageUsedIf>,
     pub secret: bool,
     pub default_note: Option<String>,
+    pub description: Option<String>,
 }
 
 /// Wraps a field's usage tree as parent-group items.
 pub fn attach_field_usage(mut tree: UsageTree, meta: FieldUsageMeta) -> Vec<UsageItem> {
     apply_usage_flags(&mut tree.items, meta.secret, meta.default_note.as_deref());
     match tree.kind {
-        UsageTreeKind::Leaf => tree.items,
+        UsageTreeKind::Leaf => {
+            for item in &mut tree.items {
+                if let UsageItem::Field(field) = item {
+                    if meta.description.is_some() {
+                        field.description = meta.description.clone();
+                    }
+                }
+            }
+            tree.items
+        }
         UsageTreeKind::Struct | UsageTreeKind::OptionalStruct => {
-            if should_inline(&tree, &meta) {
+            let inline = should_inline(&tree, &meta);
+            if inline && meta.description.is_none() {
                 tree.items
             } else {
                 vec![UsageItem::Group(UsageGroup {
                     title: choose_title(&tree, &meta),
+                    description: meta.description,
+                    inline,
                     optional: tree.kind == UsageTreeKind::OptionalStruct,
                     used_if: meta.used_if,
                     items: tree.items,
@@ -418,6 +460,7 @@ pub fn tagged_enum_usage(
         .collect();
     let mut items = vec![UsageItem::Field(UsageField {
         name: tag_var.clone(),
+        description: None,
         typ: UsageType::Enum,
         required: default.is_none(),
         default: default.map(str::to_string),
@@ -435,12 +478,16 @@ pub fn tagged_enum_usage(
         };
         let group = match variant.tree {
             Some(tree) => UsageGroup {
+                description: None,
+                inline: false,
                 title: tree.title.unwrap_or_else(|| fallback_title(&variant.value)),
                 optional: tree.kind == UsageTreeKind::OptionalStruct,
                 used_if: Some(used_if),
                 items: tree.items,
             },
             None => UsageGroup {
+                description: None,
+                inline: false,
                 title: fallback_title(&variant.value),
                 optional: false,
                 used_if: Some(used_if),
@@ -553,6 +600,11 @@ fn split_items(items: &[UsageItem]) -> (Vec<UsageField>, Vec<UsageGroup>) {
     for item in items {
         match item {
             UsageItem::Field(field) => fields.push(field.clone()),
+            UsageItem::Group(group) if group.inline => {
+                let (nested_fields, nested_groups) = split_items(&group.items);
+                fields.extend(nested_fields);
+                groups.extend(nested_groups);
+            }
             UsageItem::Group(group) => groups.push(group.clone()),
         }
     }
