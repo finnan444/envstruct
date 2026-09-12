@@ -65,6 +65,8 @@ pub trait EnvParsePrimitive {
     }
 
     /// Closed set of allowed values, if known from the type declaration.
+    /// For maps and lists, describes keys and items respectively, rather than
+    /// complete variable values. Presence requirements are enforced by `parse`.
     fn usage_values() -> Option<Vec<String>> {
         None
     }

@@ -709,7 +709,12 @@ fn field_name_cell(field: &UsageField, indent: &str) -> String {
 fn type_cell(field: &UsageField) -> String {
     let base = field.typ.display();
     if let Some(values) = &field.values {
-        return format!("{base}: {}", values.join("|"));
+        let values = values.join(", ");
+        return match &field.typ {
+            UsageType::Map(_, _) => format!("{base} (keys: {values})"),
+            UsageType::List(_) => format!("{base} (items: {values})"),
+            _ => format!("{base}: {values}"),
+        };
     }
     match field.typ.int_limit() {
         Some(IntLimit::Range { min, max, .. }) => format!("{base} ({min}..={max})"),
@@ -826,7 +831,7 @@ fn find_split(s: &str, width: usize) -> usize {
         if count >= width {
             return last_break.unwrap_or(idx);
         }
-        if matches!(ch, ' ' | ',' | ';' | '|') {
+        if matches!(ch, ' ' | ',' | ';') {
             last_break = Some(idx + ch.len_utf8());
         }
     }
@@ -842,7 +847,7 @@ fn split_at_char(s: &str, idx: usize) -> (&str, &str) {
 }
 
 fn trim_wrap_edge(s: &str) -> &str {
-    s.trim_matches(|c: char| matches!(c, ' ' | ',' | ';' | '|'))
+    s.trim_matches(|c: char| matches!(c, ' ' | ',' | ';'))
 }
 
 fn quote_value(value: &str) -> String {
@@ -949,6 +954,12 @@ pub fn strip_namespace(name: &str) -> String {
     name.split_inclusive(SPLITTERS)
         .flat_map(|component| component.rsplit("::").next())
         .collect()
+}
+
+#[test]
+fn wrapping_preserves_literal_pipes_without_preferring_them_as_breaks() {
+    assert_eq!(wrap_text("ab|cdefgh", 6), ["ab|cde", "fgh"]);
+    assert_eq!(wrap_text("abcde|fgh", 6), ["abcde|", "fgh"]);
 }
 
 #[test]

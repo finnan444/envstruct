@@ -150,7 +150,7 @@ fn default_field_is_no_and_shown_value_is_applied() {
     let usage = Config::usage_with_prefix("TEST").unwrap();
     assert!(usage.contains(r#""gcs""#));
     assert!(usage.contains(r#""150""#));
-    assert!(usage.contains("enum: gcs|local|mock"));
+    assert!(usage.contains("enum: gcs, local, mock"));
 
     clean_env();
     let config = Config::with_prefix("TEST").unwrap();
@@ -586,11 +586,11 @@ fn long_enums_wrap_inside_the_type_column() {
             "TYPE fragment longer than wrap width ({typ:?}):\n{line}"
         );
         assert!(
-            !typ.starts_with('|') && !typ.ends_with('|'),
-            "TYPE wrap must not start or end with |: {typ:?}"
+            !typ.contains('|'),
+            "values must not look like column separators: {typ:?}"
         );
     }
-    assert!(usage.contains("enum: nick|lang"));
+    assert!(usage.contains("enum: nick, lang"));
 }
 
 #[test]
@@ -613,10 +613,22 @@ fn map_keys_are_shown_in_the_type_column() {
 
         fn usage_values() -> Option<Vec<String>> {
             Some(
-                ["nick", "lang", "email"]
-                    .into_iter()
-                    .map(str::to_string)
-                    .collect(),
+                [
+                    "nick",
+                    "lang",
+                    "email",
+                    "platform_type",
+                    "public_id",
+                    "player_id",
+                    "support_id",
+                    "refferer",
+                    "crash_id",
+                    "revenue",
+                    "game_info",
+                ]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
             )
         }
     }
@@ -627,11 +639,57 @@ fn map_keys_are_shown_in_the_type_column() {
     }
 
     let usage = Config::usage_with_prefix("ZENDESK").unwrap();
-    let table_row = usage
+    let header = usage
         .lines()
-        .find(|line| line.starts_with("ZENDESK_CUSTOM_FIELDS |"))
-        .expect("table row");
-    assert!(table_row.contains("map<string,u64>: nick|lang|email"));
+        .find(|line| line.starts_with("VARIABLE"))
+        .expect("header");
+    let lines = field_wrap_lines(&usage, "ZENDESK_CUSTOM_FIELDS");
+    assert!(lines.len() > 1, "11 map keys should wrap:\n{usage}");
+    for line in &lines {
+        assert_eq!(column_pipe_positions(line), column_pipe_positions(header));
+        assert_eq!(line.matches('|').count(), 3);
+        assert!(type_cell(line).chars().count() <= 40);
+    }
+    let typ = lines
+        .iter()
+        .map(|line| type_cell(line))
+        .collect::<Vec<_>>()
+        .join(", ");
+    assert_eq!(
+        typ,
+        "map<string,u64> (keys: nick, lang, email, platform_type, public_id, player_id, support_id, refferer, crash_id, revenue, game_info)"
+    );
+}
+
+#[test]
+#[serial]
+fn list_items_are_distinct_from_scalar_choices() {
+    #[derive(Debug)]
+    struct Items(Vec<String>);
+
+    impl EnvParsePrimitive for Items {
+        fn parse(val: &str) -> Result<Self, BoxError> {
+            Ok(Self(Vec::<String>::parse(val)?))
+        }
+
+        fn usage_type() -> UsageType {
+            UsageType::List(Box::new(UsageType::String))
+        }
+
+        fn usage_values() -> Option<Vec<String>> {
+            Some(vec!["nick".to_string(), "lang".to_string()])
+        }
+    }
+
+    #[derive(EnvStruct, Debug)]
+    struct Config {
+        items: Items,
+        mode: StoreMode,
+    }
+
+    let usage = Config::usage().unwrap();
+    assert!(usage.contains("list<string> (items: nick, lang)"));
+    assert!(usage.contains("enum: gcs, local, mock"));
 }
 
 #[test]
@@ -644,18 +702,18 @@ fn usage_snapshot_groups_and_conditions() {
 
 Byte sizes accept values such as 4MB and 10MiB.
 
-VARIABLE                                | TYPE                 | REQUIRED | DEFAULT
-----------------------------------------+----------------------+----------+----------------
-AVATARDB_IMAGE_SIZE_LIMIT               | bytesize             | no       | "4MB"
-AVATARDB_IMAGE_WIDTH                    | u32                  | no       | "150"
-AVATARDB_NSFW_SCORE_MAX                 | f64                  | no       | "0.9"
-AVATARDB_MODE                           | enum: gcs|local|mock | no       | "gcs"
-[used when AVATARDB_MODE=gcs (default)] |                      | no
-  AVATARDB_BUCKET_NAME                  | string               | yes      | —
-  AVATARDB_DIGEST_SALT                  | string               | no       | "squibblefluff"
-[used when AVATARDB_MODE=local]         |                      | no
-  AVATARDB_LOCAL_DATA_DIR               | string               | yes      | —
-[used when AVATARDB_MODE=mock]          |                      | no
+VARIABLE                                | TYPE                   | REQUIRED | DEFAULT
+----------------------------------------+------------------------+----------+----------------
+AVATARDB_IMAGE_SIZE_LIMIT               | bytesize               | no       | "4MB"
+AVATARDB_IMAGE_WIDTH                    | u32                    | no       | "150"
+AVATARDB_NSFW_SCORE_MAX                 | f64                    | no       | "0.9"
+AVATARDB_MODE                           | enum: gcs, local, mock | no       | "gcs"
+[used when AVATARDB_MODE=gcs (default)] |                        | no
+  AVATARDB_BUCKET_NAME                  | string                 | yes      | —
+  AVATARDB_DIGEST_SALT                  | string                 | no       | "squibblefluff"
+[used when AVATARDB_MODE=local]         |                        | no
+  AVATARDB_LOCAL_DATA_DIR               | string                 | yes      | —
+[used when AVATARDB_MODE=mock]          |                        | no
 "#,
     );
 }

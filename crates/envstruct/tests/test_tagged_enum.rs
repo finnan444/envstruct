@@ -332,14 +332,14 @@ fn usage_snapshot_of_an_enum_with_data() {
 
 Durations accept values such as 15s, 10m, and 24h.
 
-VARIABLE                                  | TYPE               | REQUIRED | DEFAULT
-------------------------------------------+--------------------+----------+--------
-DOOM_RELOAD_DELAY                         | duration           | no       | "60s"
-DOOM_MODE                                 | enum: local|remote | no       | "local"
-[selected when DOOM_MODE=local (default)] |                    | yes
-[selected when DOOM_MODE=remote]          |                    | yes
-  DOOM_REMOTE_CACHE_SIZE                  | u32                | no       | "10000"
-  DOOM_REMOTE_DSN                         | string             | yes      | —
+VARIABLE                                  | TYPE                | REQUIRED | DEFAULT
+------------------------------------------+---------------------+----------+--------
+DOOM_RELOAD_DELAY                         | duration            | no       | "60s"
+DOOM_MODE                                 | enum: local, remote | no       | "local"
+[selected when DOOM_MODE=local (default)] |                     | yes
+[selected when DOOM_MODE=remote]          |                     | yes
+  DOOM_REMOTE_CACHE_SIZE                  | u32                 | no       | "10000"
+  DOOM_REMOTE_DSN                         | string              | yes      | —
 "#;
     if usage != expected {
         panic!("usage snapshot mismatch\n=== actual ===\n{usage}=== expected ===\n{expected}");
