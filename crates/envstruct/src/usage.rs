@@ -226,6 +226,95 @@ impl UsageTree {
         flatten_items(&self.items, &mut entries);
         entries
     }
+
+    /// Renders a `.env.example` without reading the environment.
+    ///
+    /// Required fields are empty assignments; optional fields are commented with their
+    /// defaults. Secrets never include a value. Conditional groups are active only when
+    /// their condition matches the switch default and their parent is active. Optional
+    /// groups without a condition stay commented to avoid enabling them accidentally.
+    ///
+    /// `used_if` only describes application usage; it does not relax parser requirements.
+    /// Empty assignments are placeholders, and types such as `String` accept them.
+    ///
+    /// ```no_run
+    /// # use envstruct::prelude::*;
+    /// # #[derive(EnvStruct)]
+    /// # struct Config { port: u16 }
+    /// let example = Config::get_usage_tree("APP", None)?.to_env_example();
+    /// std::fs::write(".env.example", example)?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn to_env_example(&self) -> String {
+        let mut output = String::new();
+        render_env_items(
+            &self.items,
+            self.kind != UsageTreeKind::OptionalStruct,
+            &mut output,
+        );
+        output
+    }
+}
+
+fn render_env_items(items: &[UsageItem], active: bool, output: &mut String) {
+    for item in items {
+        match item {
+            UsageItem::Field(field) => {
+                if !active || !field.required {
+                    output.push_str("# ");
+                }
+                let value = if field.secret || field.required {
+                    ""
+                } else {
+                    field.default.as_deref().unwrap_or("")
+                };
+                let _ = writeln!(output, "{}={}", field.name, env_example_value(value));
+            }
+            UsageItem::Group(group) => {
+                if !output.is_empty() && !output.ends_with("\n\n") {
+                    output.push('\n');
+                }
+                let selected = if let Some(condition) = &group.used_if {
+                    let _ = writeln!(
+                        output,
+                        "# used when {}={}",
+                        condition.env_name,
+                        env_example_value(&condition.value)
+                    );
+                    condition.switch_default.as_deref() == Some(condition.value.as_str())
+                } else {
+                    for line in group.title.lines() {
+                        let _ = writeln!(output, "# {line}");
+                    }
+                    !group.optional
+                };
+                render_env_items(&group.items, active && selected, output);
+                if !output.ends_with("\n\n") {
+                    output.push('\n');
+                }
+            }
+        }
+    }
+}
+
+fn env_example_value(value: &str) -> String {
+    if !value
+        .chars()
+        .any(|c| c.is_whitespace() || matches!(c, '#' | '\'' | '"' | '\\' | '$' | '`'))
+    {
+        return value.to_string();
+    }
+    format!(
+        "\"{}\"",
+        value
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('$', "\\$")
+            .replace('`', "\\`")
+            .replace('\n', "\\n")
+            .replace('\r', "\\r")
+            .replace('\t', "\\t")
+    )
 }
 
 fn flatten_items(items: &[UsageItem], entries: &mut Vec<EnvEntry>) {
