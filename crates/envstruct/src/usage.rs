@@ -554,10 +554,12 @@ fn emit_group(group: UsageGroup, parent_path: &str, blocks: &mut Vec<UsageBlock>
     let path = group_path(parent_path, &group.title);
     if group.optional || group.used_if.is_some() {
         let (fields, children) = split_items(&group.items);
-        blocks.push(UsageBlock::Section {
-            marker: section_marker(&group, &path),
-            fields,
-        });
+        if !fields.is_empty() {
+            blocks.push(UsageBlock::Section {
+                marker: section_marker(&group, &path),
+                fields,
+            });
+        }
         for child in children {
             emit_group(child, &path, blocks);
         }

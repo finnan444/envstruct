@@ -444,7 +444,10 @@ fn usage_builds_without_configured_environment() {
     assert!(usage.contains("AVATARDB_MODE"));
     assert!(usage.contains("[used when AVATARDB_MODE=gcs (default)]"));
     assert!(usage.contains("[used when AVATARDB_MODE=local]"));
-    assert!(usage.contains("[used when AVATARDB_MODE=mock]"));
+    assert!(
+        !usage.contains("[used when AVATARDB_MODE=mock]"),
+        "groups without variables must not leave empty sections"
+    );
 }
 
 #[test]
@@ -711,7 +714,6 @@ AVATARDB_MODE                           | enum: gcs, local, mock | "gcs"
   AVATARDB_DIGEST_SALT                  | string                 | "squibblefluff"
 [used when AVATARDB_MODE=local]
   AVATARDB_LOCAL_DATA_DIR               | string                 | —
-[used when AVATARDB_MODE=mock]
 "#,
     );
 }

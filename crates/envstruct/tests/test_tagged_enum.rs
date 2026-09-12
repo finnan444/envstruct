@@ -315,7 +315,10 @@ fn renamed_and_flattened_variants_agree_between_parser_and_help() {
 fn the_help_is_built_without_a_configured_environment() {
     clean_env();
     let usage = DoomConfig::usage_with_prefix("DOOM").unwrap();
-    assert!(usage.contains("[selected when DOOM_MODE=local (default)]"));
+    assert!(
+        !usage.contains("[selected when DOOM_MODE=local (default)]"),
+        "variants without variables must not leave empty sections"
+    );
     assert!(usage.contains("[selected when DOOM_MODE=remote]"));
     assert!(!usage.contains("[used when"));
     assert!(
@@ -334,14 +337,13 @@ fn usage_snapshot_of_an_enum_with_data() {
 none: optional, unset by default.
 Durations accept values such as 15s, 10m, and 24h.
 
-VARIABLE                                  | TYPE                | DEFAULT
-------------------------------------------+---------------------+--------
-DOOM_RELOAD_DELAY                         | duration            | "60s"
-DOOM_MODE                                 | enum: local, remote | "local"
-[selected when DOOM_MODE=local (default)]
+VARIABLE                         | TYPE                | DEFAULT
+---------------------------------+---------------------+--------
+DOOM_RELOAD_DELAY                | duration            | "60s"
+DOOM_MODE                        | enum: local, remote | "local"
 [selected when DOOM_MODE=remote]
-  DOOM_REMOTE_CACHE_SIZE                  | u32                 | "10000"
-  DOOM_REMOTE_DSN                         | string              | —
+  DOOM_REMOTE_CACHE_SIZE         | u32                 | "10000"
+  DOOM_REMOTE_DSN                | string              | —
 "#;
     if usage != expected {
         panic!("usage snapshot mismatch\n=== actual ===\n{usage}=== expected ===\n{expected}");
