@@ -164,6 +164,10 @@ pub struct UsageField {
     pub required: bool,
     pub default: Option<String>,
     pub values: Option<Vec<String>>,
+    /// Usage-only mark that this value is a secret (a k8s Secret, not a ConfigMap).
+    pub secret: bool,
+    /// Runtime-computed default shown in the DEFAULT column in parentheses.
+    pub default_note: Option<String>,
 }
 
 /// A named group of fields and nested groups.
@@ -211,6 +215,8 @@ impl UsageTree {
                 required,
                 default,
                 values,
+                secret: false,
+                default_note: None,
             })],
         }
     }
@@ -242,10 +248,13 @@ pub struct FieldUsageMeta {
     pub flatten: bool,
     pub inline: bool,
     pub used_if: Option<UsageUsedIf>,
+    pub secret: bool,
+    pub default_note: Option<String>,
 }
 
 /// Wraps a field's usage tree as parent-group items.
-pub fn attach_field_usage(tree: UsageTree, meta: FieldUsageMeta) -> Vec<UsageItem> {
+pub fn attach_field_usage(mut tree: UsageTree, meta: FieldUsageMeta) -> Vec<UsageItem> {
+    apply_usage_flags(&mut tree.items, meta.secret, meta.default_note.as_deref());
     match tree.kind {
         UsageTreeKind::Leaf => tree.items,
         UsageTreeKind::Struct | UsageTreeKind::OptionalStruct => {
@@ -258,6 +267,25 @@ pub fn attach_field_usage(tree: UsageTree, meta: FieldUsageMeta) -> Vec<UsageIte
                     used_if: meta.used_if,
                     items: tree.items,
                 })]
+            }
+        }
+    }
+}
+
+fn apply_usage_flags(items: &mut [UsageItem], secret: bool, default_note: Option<&str>) {
+    if !secret && default_note.is_none() {
+        return;
+    }
+    for item in items {
+        match item {
+            UsageItem::Field(field) => {
+                field.secret |= secret;
+                if field.default_note.is_none() {
+                    field.default_note = default_note.map(str::to_string);
+                }
+            }
+            UsageItem::Group(group) => {
+                apply_usage_flags(&mut group.items, secret, default_note);
             }
         }
     }
@@ -305,6 +333,8 @@ pub fn tagged_enum_usage(
         required: default.is_none(),
         default: default.map(str::to_string),
         values: Some(values),
+        secret: false,
+        default_note: None,
     })];
 
     for variant in variants {
@@ -657,15 +687,23 @@ fn header_cols() -> Vec<String> {
 
 fn field_columns(field: &UsageField, indent: &str) -> Vec<String> {
     vec![
-        format!("{indent}{}", field.name),
+        field_name_cell(field, indent),
         type_cell(field),
         if field.required {
             "yes".to_string()
         } else {
             "no".to_string()
         },
-        display_default(&field.default),
+        display_default(field),
     ]
+}
+
+fn field_name_cell(field: &UsageField, indent: &str) -> String {
+    if field.secret {
+        format!("{indent}{} *", field.name)
+    } else {
+        format!("{indent}{}", field.name)
+    }
 }
 
 fn type_cell(field: &UsageField) -> String {
@@ -811,10 +849,15 @@ fn quote_value(value: &str) -> String {
     format!("\"{value}\"")
 }
 
-fn display_default(default: &Option<String>) -> String {
-    match default {
-        None => NO_DEFAULT.to_string(),
-        Some(value) => quote_value(value),
+fn display_default(field: &UsageField) -> String {
+    if let Some(value) = &field.default {
+        quote_value(value)
+    } else if let Some(note) = &field.default_note {
+        format!("({note})")
+    } else if field.required {
+        NO_DEFAULT.to_string()
+    } else {
+        "none".to_string()
     }
 }
 
@@ -838,6 +881,9 @@ fn syntax_notes(tree: &UsageTree) -> Vec<String> {
         bytesize |= typ.uses_bytesize();
     });
     let mut notes = Vec::new();
+    if items_have_secret(&tree.items) {
+        notes.push("A * after a name marks a secret.".to_string());
+    }
     if int_range {
         notes.push(
             "Integer ranges are inclusive bounds; a value outside them fails to parse.".to_string(),
@@ -876,6 +922,13 @@ fn walk_item_types(items: &[UsageItem], visit: &mut impl FnMut(&UsageType)) {
             UsageItem::Group(group) => walk_item_types(&group.items, visit),
         }
     }
+}
+
+fn items_have_secret(items: &[UsageItem]) -> bool {
+    items.iter().any(|item| match item {
+        UsageItem::Field(field) => field.secret,
+        UsageItem::Group(group) => items_have_secret(&group.items),
+    })
 }
 
 fn normalize_output(out: &str) -> String {

@@ -195,7 +195,8 @@ fn empty_default_differs_from_missing_default() {
 
     let usage = Config::usage_with_prefix("TEST").unwrap();
     assert!(usage.contains(r#"| """#));
-    assert!(usage.contains('—'));
+    assert!(usage.contains("none"));
+    assert!(!usage.contains('—'));
 
     clean_env();
     let config = Config::with_prefix("TEST").unwrap();
@@ -916,4 +917,162 @@ fn insta_like_eq(actual: &str, expected: &str) {
     if actual != expected {
         panic!("usage snapshot mismatch\n=== actual ===\n{actual}=== expected ===\n{expected}");
     }
+}
+
+#[test]
+#[serial]
+fn secret_is_usage_metadata_and_does_not_change_parse() {
+    #[derive(EnvStruct, Debug, PartialEq)]
+    pub struct Config {
+        #[env(secret)]
+        pub dsn: String,
+        pub port: u16,
+    }
+
+    let tree = Config::get_usage_tree("APP", None).unwrap();
+    let dsn = find_field(&tree.items, "APP_DSN").unwrap();
+    let port = find_field(&tree.items, "APP_PORT").unwrap();
+    assert!(dsn.secret);
+    assert!(!port.secret);
+
+    let usage = Config::usage_with_prefix("APP").unwrap();
+    assert!(usage.contains("A * after a name marks a secret."));
+    assert!(usage.contains("APP_DSN *"));
+    assert!(!usage.contains("APP_PORT *"));
+
+    clean_env();
+    let err = Config::with_prefix("APP").unwrap_err();
+    assert!(matches!(err, EnvStructError::MissingEnvVar(name) if name == "APP_DSN"));
+
+    env::set_var("APP_DSN", "postgres://localhost");
+    env::set_var("APP_PORT", "5432");
+    assert_eq!(
+        Config::with_prefix("APP").unwrap(),
+        Config {
+            dsn: "postgres://localhost".to_string(),
+            port: 5432,
+        }
+    );
+}
+
+#[test]
+#[serial]
+fn secret_on_nested_struct_marks_descendant_fields() {
+    #[derive(EnvStruct, Debug)]
+    pub struct Config {
+        #[env(secret)]
+        pub session: Session,
+        pub name: String,
+    }
+
+    #[derive(EnvStruct, Debug)]
+    pub struct Session {
+        pub cookie: String,
+        pub gcm_secret: String,
+    }
+
+    let tree = Config::get_usage_tree("APP", None).unwrap();
+    assert!(
+        find_field(&tree.items, "APP_SESSION_COOKIE")
+            .unwrap()
+            .secret
+    );
+    assert!(
+        find_field(&tree.items, "APP_SESSION_GCM_SECRET")
+            .unwrap()
+            .secret
+    );
+    assert!(!find_field(&tree.items, "APP_NAME").unwrap().secret);
+}
+
+#[test]
+#[serial]
+fn default_note_is_shown_in_parentheses_and_does_not_parse() {
+    #[derive(EnvStruct, Debug, PartialEq)]
+    pub struct Config {
+        #[env(default_note = "physical CPU count")]
+        pub worker_count: Option<usize>,
+    }
+
+    let tree = Config::get_usage_tree("APP", None).unwrap();
+    let field = find_field(&tree.items, "APP_WORKER_COUNT").unwrap();
+    assert!(!field.required);
+    assert_eq!(field.default, None);
+    assert_eq!(field.default_note.as_deref(), Some("physical CPU count"));
+
+    let usage = Config::usage_with_prefix("APP").unwrap();
+    assert!(usage.contains("(physical CPU count)"));
+    assert!(!usage.contains("\"physical CPU count\""));
+    assert!(!usage.contains("none"));
+
+    clean_env();
+    assert_eq!(
+        Config::with_prefix("APP").unwrap(),
+        Config { worker_count: None }
+    );
+}
+
+#[test]
+#[serial]
+fn optional_without_default_prints_none_required_prints_em_dash() {
+    #[derive(EnvStruct, Debug)]
+    pub struct Config {
+        pub dsn: String,
+        pub app_name: Option<String>,
+    }
+
+    let usage = Config::usage_with_prefix("APP").unwrap();
+    let dsn = usage
+        .lines()
+        .find(|line| line.starts_with("APP_DSN"))
+        .expect("dsn row");
+    let app_name = usage
+        .lines()
+        .find(|line| line.starts_with("APP_APP_NAME"))
+        .expect("app_name row");
+    assert!(dsn.contains('—'), "required DEFAULT should be —:\n{dsn}");
+    assert!(
+        !dsn.contains("none"),
+        "required DEFAULT must not be none:\n{dsn}"
+    );
+    assert!(
+        app_name.contains("none"),
+        "optional DEFAULT should be none:\n{app_name}"
+    );
+    assert!(
+        !app_name.contains('—'),
+        "optional DEFAULT must not be —:\n{app_name}"
+    );
+}
+
+#[test]
+#[serial]
+fn usage_snapshot_secret_default_note_and_none() {
+    #[derive(EnvStruct, Debug)]
+    pub struct Config {
+        #[env(secret)]
+        pub dsn: String,
+        #[env(default_note = "physical CPU count")]
+        pub worker_count: Option<usize>,
+        pub app_name: Option<String>,
+        #[env(default = "8080")]
+        pub port: u16,
+    }
+
+    let usage = Config::usage_with_prefix("APP").unwrap();
+    insta_like_eq(
+        &usage,
+        r#"Environment variables
+
+A * after a name marks a secret.
+Integer ranges are inclusive bounds; a value outside them fails to parse.
+
+VARIABLE         | TYPE            | REQUIRED | DEFAULT
+-----------------+-----------------+----------+---------------------
+APP_APP_NAME     | string          | no       | none
+APP_DSN *        | string          | yes      | —
+APP_PORT         | u16 (0..=65535) | no       | "8080"
+APP_WORKER_COUNT | usize           | no       | (physical CPU count)
+"#,
+    );
 }

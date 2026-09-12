@@ -85,11 +85,13 @@ impl EnvStructVariantReceiver {
         let payload = self.payload()?;
         if payload.name.is_some()
             || payload.default.is_some()
+            || payload.default_note.is_some()
             || payload.title.is_some()
             || payload.used_if.is_some()
             || payload.flatten
             || payload.inline
             || payload.skip
+            || payload.secret
         {
             return Some(format!(
                 "env enum variant `{}` supports only `with` on its payload; other attributes \
@@ -118,6 +120,9 @@ struct EnvStructFieldReceiver {
     inline: bool,
     #[darling(default)]
     skip: bool,
+    #[darling(default)]
+    secret: bool,
+    default_note: Option<String>,
 }
 
 impl EnvStructFieldReceiver {
@@ -430,6 +435,21 @@ impl EnvStructInputReceiver {
             return derive_error(ident.span(), &message);
         }
 
+        if let Some(field) = fields
+            .iter()
+            .find(|field| field.default.is_some() && field.default_note.is_some())
+        {
+            let span = field
+                .ident
+                .as_ref()
+                .map(|ident| ident.span())
+                .unwrap_or_else(|| field.ty.span());
+            return derive_error(
+                span,
+                "env `default` and `default_note` cannot be set together",
+            );
+        }
+
         let field_exprs: Vec<_> = fields
             .iter()
             .enumerate()
@@ -461,8 +481,13 @@ impl EnvStructInputReceiver {
                 let field_name_str = field.field_name_str();
                 let flatten = field.flatten;
                 let inline = field.inline;
+                let secret = field.secret;
                 let title_expr = match &field.title {
                     Some(title) => quote!(Some(#title.to_string())),
+                    None => quote!(None),
+                };
+                let default_note_expr = match &field.default_note {
+                    Some(note) => quote!(Some(#note.to_string())),
                     None => quote!(None),
                 };
                 let used_if = used_if_expr(field, fields);
@@ -475,6 +500,8 @@ impl EnvStructInputReceiver {
                             flatten: #flatten,
                             inline: #inline,
                             used_if: #used_if,
+                            secret: #secret,
+                            default_note: #default_note_expr,
                         },
                     )
                 }
