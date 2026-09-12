@@ -175,6 +175,37 @@ enum Backend {
 }
 
 #[test]
+fn empty_groups_do_not_leave_orphaned_conditions_or_descriptions() {
+    #[derive(EnvStruct)]
+    struct Empty {}
+
+    #[derive(EnvStruct)]
+    #[env(tag = "mode")]
+    enum Store {
+        Mock,
+        Remote(Credentials),
+    }
+
+    #[derive(EnvStruct)]
+    struct Config {
+        #[env(default = "false")]
+        enabled: bool,
+        /// No credentials are needed when disabled.
+        #[env(used_if = "enabled=false")]
+        disabled: Empty,
+        /// No environment configuration.
+        empty: Empty,
+        #[env(flatten, default = "mock")]
+        store: Store,
+    }
+
+    let example = Config::get_usage_tree("APP", None)
+        .unwrap()
+        .to_env_example();
+    assert_eq!(example, "# APP_ENABLED=false\n# APP_MODE=mock\n\n# used when APP_MODE=remote\n# APP_REMOTE_DSN=\n# APP_REMOTE_TIMEOUT=30s\n\n");
+}
+
+#[test]
 fn missing_switch_default_does_not_choose_a_branch() {
     let example = Backend::get_usage_tree("STORE", None)
         .unwrap()

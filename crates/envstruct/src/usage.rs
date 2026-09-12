@@ -242,6 +242,7 @@ impl UsageTree {
     /// groups without a condition stay commented to avoid enabling them accidentally.
     /// Field doc-comments are printed above assignments or groups, preserving Markdown.
     /// Group descriptions replace their titles; usage conditions are always printed.
+    /// Empty groups are omitted.
     ///
     /// `used_if` only describes application usage; it does not relax parser requirements.
     /// Empty assignments are placeholders, and types such as `String` accept them.
@@ -284,6 +285,9 @@ fn render_env_items(items: &[UsageItem], active: bool, output: &mut String) {
                 let _ = writeln!(output, "{}={}", field.name, env_example_value(value));
             }
             UsageItem::Group(group) => {
+                if group.items.is_empty() {
+                    continue;
+                }
                 if !output.is_empty() && !output.ends_with("\n\n") {
                     output.push('\n');
                 }
