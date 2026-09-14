@@ -777,7 +777,7 @@ fn field_columns(field: &UsageField, indent: &str, with_example: bool) -> Vec<St
         display_default(field),
     ];
     if with_example {
-        cols.push(field.example.clone().unwrap_or_default());
+        cols.push(field.example.as_deref().map(escape_cell).unwrap_or_default());
     }
     cols
 }
@@ -939,8 +939,18 @@ fn trim_wrap_edge(s: &str) -> &str {
     s.trim_matches(|c: char| matches!(c, ' ' | ',' | ';'))
 }
 
+/// A table cell must stay on its own line, so control characters are rendered escaped instead of
+/// being emitted raw and breaking the column layout.
+fn escape_cell(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t")
+}
+
 fn quote_value(value: &str) -> String {
-    format!("\"{value}\"")
+    format!("\"{}\"", escape_cell(value))
 }
 
 fn display_default(field: &UsageField) -> String {

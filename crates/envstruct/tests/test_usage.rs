@@ -1145,3 +1145,27 @@ APP_WORKER_COUNT | usize           | (physical CPU count)
 "#,
     );
 }
+
+#[test]
+#[serial]
+fn usage_snapshot_escapes_control_chars_in_example_and_default() {
+    #[derive(EnvStruct, Debug)]
+    pub struct Config {
+        #[env(example = "hello\nSECOND=value")]
+        pub first: String,
+        #[env(default = "a\tb")]
+        pub second: String,
+    }
+
+    let usage = Config::usage_with_prefix("APP").unwrap();
+    insta_like_eq(
+        &usage,
+        r#"Environment variables
+
+VARIABLE   | TYPE   | DEFAULT    | EXAMPLE
+-----------+--------+------------+--------------------
+APP_FIRST  | string | <required> | hello\nSECOND=value
+APP_SECOND | string | "a\tb"     |
+"#,
+    );
+}
