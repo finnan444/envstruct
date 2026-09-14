@@ -320,12 +320,12 @@ fn examples_fill_variables_that_have_no_default_including_secrets() {
         Config::usage().unwrap(),
         r#"Environment variables
 
-VARIABLE            | TYPE   | DEFAULT    | EXAMPLE
---------------------+--------+------------+-----------------------------------
-DSN                 | string | <required> | postgres://user:pass@localhost/app
-GCM_SECRET (secret) | string | <required> | 0123456789abcdef
-NESTED_DSN          | string | <required> |
-WEBHOOK             | string | none       | https://example.com/hook
+VARIABLE            | TYPE   | DEFAULT    | EXAMPLE                            | FIELD
+--------------------+--------+------------+------------------------------------+------------------
+DSN                 | string | <required> | postgres://user:pass@localhost/app | Config.dsn
+GCM_SECRET (secret) | string | <required> | 0123456789abcdef                   | Config.gcm_secret
+NESTED_DSN          | string | <required> |                                    | Nested.dsn
+WEBHOOK             | string | none       | https://example.com/hook           | Config.webhook
 "#
     );
 }

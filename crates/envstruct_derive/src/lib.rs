@@ -529,6 +529,7 @@ impl EnvStructInputReceiver {
             })
             .collect();
 
+        let struct_name_str = ident.to_string();
         let inspect_exprs: Vec<_> = fields
             .iter()
             .filter(|field| !field.skip)
@@ -558,6 +559,7 @@ impl EnvStructInputReceiver {
                     ::envstruct::attach_field_usage(
                         #field_type::get_usage_tree(#var_name_expr, #var_default)?,
                         ::envstruct::FieldUsageMeta {
+                            struct_name: #struct_name_str,
                             field_name: #field_name_str,
                             title: #title_expr,
                             flatten: #flatten,

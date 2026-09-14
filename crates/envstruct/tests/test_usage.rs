@@ -473,18 +473,15 @@ fn long_values_are_not_truncated() {
     }
 
     let usage = Config::usage_with_prefix("TEST").unwrap();
-    let compact: String = usage
-        .chars()
-        .filter(|c| !c.is_whitespace() && *c != '|')
-        .collect();
+    let lines = field_wrap_lines(&usage, "TEST_URL");
+    let compact: String = lines.iter().map(|line| default_cell(line)).collect();
     assert!(
         compact.contains("https://very-long.example.com/path/that/should/remain/complete/in/usage")
     );
     assert!(!usage.contains('…'));
-    let lines = field_wrap_lines(&usage, "TEST_URL");
     assert!(lines.len() > 1, "long defaults must still wrap: {usage}");
-    for line in lines {
-        assert!(line.split(" | ").nth(2).unwrap().chars().count() <= 40);
+    for line in &lines {
+        assert!(default_cell(line).chars().count() <= 40);
     }
     assert!(
         usage.lines().all(|line| line == line.trim_end()),
@@ -527,6 +524,15 @@ fn field_wrap_lines<'a>(usage: &'a str, name: &str) -> Vec<&'a str> {
 
 fn type_cell(line: &str) -> &str {
     line.split(" |").nth(1).map(str::trim).unwrap_or(line)
+}
+
+/// A row whose last columns are empty ends on a bare separator, so the trailing `|` of a
+/// wrapped line is not part of the cell.
+fn default_cell(line: &str) -> &str {
+    line.split(" | ")
+        .nth(2)
+        .map(|cell| cell.trim_end_matches('|').trim())
+        .unwrap_or(line)
 }
 
 #[test]
@@ -646,7 +652,7 @@ fn map_keys_are_shown_in_the_type_column() {
     assert!(lines.len() > 1, "11 map keys should wrap:\n{usage}");
     for line in &lines {
         assert_eq!(column_pipe_positions(line), column_pipe_positions(header));
-        assert_eq!(line.matches('|').count(), 2);
+        assert_eq!(line.matches('|').count(), 3);
         assert!(type_cell(line).chars().count() <= 40);
     }
     let typ = lines
@@ -699,17 +705,17 @@ fn usage_snapshot_groups_and_conditions() {
         &usage,
         r#"Environment variables
 
-VARIABLE                                | TYPE                   | DEFAULT
-----------------------------------------+------------------------+----------------
-AVATARDB_IMAGE_SIZE_LIMIT               | bytesize               | "4MB"
-AVATARDB_IMAGE_WIDTH                    | u32                    | "150"
-AVATARDB_NSFW_SCORE_MAX                 | f64                    | "0.9"
-AVATARDB_MODE                           | enum: gcs, local, mock | "gcs"
+VARIABLE                                | TYPE                   | DEFAULT         | FIELD
+----------------------------------------+------------------------+-----------------+-----------------------------
+AVATARDB_IMAGE_SIZE_LIMIT               | bytesize               | "4MB"           | ImageConfig.image_size_limit
+AVATARDB_IMAGE_WIDTH                    | u32                    | "150"           | ImageConfig.image_width
+AVATARDB_NSFW_SCORE_MAX                 | f64                    | "0.9"           | ImageConfig.nsfw_score_max
+AVATARDB_MODE                           | enum: gcs, local, mock | "gcs"           | AvatarConfig.mode
 [used when AVATARDB_MODE=gcs (default)]
-  AVATARDB_BUCKET_NAME                  | string                 | <required>
-  AVATARDB_DIGEST_SALT                  | string                 | "squibblefluff"
+  AVATARDB_BUCKET_NAME                  | string                 | <required>      | GcsConfig.bucket_name
+  AVATARDB_DIGEST_SALT                  | string                 | "squibblefluff" | GcsConfig.digest_salt
 [used when AVATARDB_MODE=local]
-  AVATARDB_LOCAL_DATA_DIR               | string                 | <required>
+  AVATARDB_LOCAL_DATA_DIR               | string                 | <required>      | LocalConfig.data_dir
 "#,
     );
 }
@@ -1081,7 +1087,7 @@ fn optional_and_required_defaults_are_readable_without_a_legend() {
         .unwrap();
     assert_eq!(
         header.split(" | ").map(str::trim).collect::<Vec<_>>(),
-        ["VARIABLE", "TYPE", "DEFAULT"]
+        ["VARIABLE", "TYPE", "DEFAULT", "FIELD"]
     );
     let dsn = usage
         .lines()
@@ -1136,12 +1142,12 @@ fn usage_snapshot_secret_default_note_and_none() {
         &usage,
         r#"Environment variables
 
-VARIABLE         | TYPE            | DEFAULT
------------------+-----------------+---------------------
-APP_APP_NAME     | string          | none
-APP_DSN (secret) | string          | <required>
-APP_PORT         | u16 (0..=65535) | "8080"
-APP_WORKER_COUNT | usize           | (physical CPU count)
+VARIABLE         | TYPE            | DEFAULT              | FIELD
+-----------------+-----------------+----------------------+--------------------
+APP_APP_NAME     | string          | none                 | Config.app_name
+APP_DSN (secret) | string          | <required>           | Config.dsn
+APP_PORT         | u16 (0..=65535) | "8080"               | Config.port
+APP_WORKER_COUNT | usize           | (physical CPU count) | Config.worker_count
 "#,
     );
 }
@@ -1162,10 +1168,57 @@ fn usage_snapshot_escapes_control_chars_in_example_and_default() {
         &usage,
         r#"Environment variables
 
-VARIABLE   | TYPE   | DEFAULT    | EXAMPLE
------------+--------+------------+--------------------
-APP_FIRST  | string | <required> | hello\nSECOND=value
-APP_SECOND | string | "a\tb"     |
+VARIABLE   | TYPE   | DEFAULT    | EXAMPLE             | FIELD
+-----------+--------+------------+---------------------+--------------
+APP_FIRST  | string | <required> | hello\nSECOND=value | Config.first
+APP_SECOND | string | "a\tb"     |                     | Config.second
+"#,
+    );
+}
+
+#[test]
+#[serial]
+fn field_column_names_the_struct_a_variable_is_declared_on() {
+    #[derive(EnvStruct, Debug)]
+    pub struct Config {
+        pub dsn: String,
+        #[env(flatten)]
+        pub db: Db,
+    }
+
+    #[derive(EnvStruct, Debug)]
+    pub struct Db {
+        #[env(default = "5432")]
+        pub port: u16,
+    }
+
+    let tree = Config::get_usage_tree("APP", None).unwrap();
+    assert_eq!(
+        find_field(&tree.items, "APP_DSN")
+            .unwrap()
+            .defined_in
+            .as_deref(),
+        Some("Config.dsn")
+    );
+    // Flattening hides the field the struct is reached through, so the variable still names
+    // the struct that declares it.
+    assert_eq!(
+        find_field(&tree.items, "APP_PORT")
+            .unwrap()
+            .defined_in
+            .as_deref(),
+        Some("Db.port")
+    );
+
+    let usage = Config::usage_with_prefix("APP").unwrap();
+    insta_like_eq(
+        &usage,
+        r#"Environment variables
+
+VARIABLE | TYPE            | DEFAULT    | FIELD
+---------+-----------------+------------+-----------
+APP_DSN  | string          | <required> | Config.dsn
+APP_PORT | u16 (0..=65535) | "5432"     | Db.port
 "#,
     );
 }
