@@ -135,7 +135,7 @@ fn default_field_is_optional_and_shown_value_is_applied() {
     assert_eq!(mode.default.as_deref(), Some("gcs"));
     assert_eq!(mode.typ, UsageType::Enum);
     assert_eq!(
-        mode.values.as_ref().map(|v| v.as_slice()),
+        mode.values.as_deref(),
         Some(["gcs".to_string(), "local".to_string(), "mock".to_string()].as_slice())
     );
 
