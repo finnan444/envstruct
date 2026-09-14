@@ -88,6 +88,7 @@ fn main() -> Result<(), envstruct::EnvStructError> {
 - `skip`: Do not parse or document the field.
 - `secret`: Mark the variable as a secret in usage output (`(secret)` after the name). Parsing is unchanged.
 - `default_note`: Runtime-computed default shown in the DEFAULT column in parentheses, as in `#[env(default_note = "physical CPU count")]`. Cannot be combined with `default`.
+- `example`: Value written for this variable in the env example, as in `#[env(example = "postgres://user:pass@localhost/app")]`. It applies to one variable, including a `secret` one, and is ignored on a field whose type is a nested struct. It cannot be empty, nor combined with `default`, which is already the example.
 - `tag`: On an enum, the variable that selects the variant, as in `#[env(tag = "mode")]`. On a variant of such an enum, `name` renames the value that selects it and `flatten` drops its segment from the names of its payload.
 
 DEFAULT is a quoted literal, a note in parentheses for a runtime default, `none` when an optional variable may be omitted, or `<required>` when a required variable has no default. A required field with `default_note` shows `<required> (note)` because the note does not supply a parser default.

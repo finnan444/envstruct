@@ -170,6 +170,8 @@ pub struct UsageField {
     pub secret: bool,
     /// Runtime-computed default shown in the DEFAULT column in parentheses.
     pub default_note: Option<String>,
+    /// Value written in the env example for a variable that has no default.
+    pub example: Option<String>,
 }
 
 /// A named group of fields and nested groups.
@@ -224,6 +226,7 @@ impl UsageTree {
                 values,
                 secret: false,
                 default_note: None,
+                example: None,
             })],
         }
     }
@@ -237,11 +240,13 @@ impl UsageTree {
     /// Renders a `.env.example` without reading the environment.
     ///
     /// Required fields are empty assignments; optional fields are commented with their
-    /// defaults. Secrets never include a value. Conditional groups are active only when
-    /// their condition matches the switch default and their parent is active. Optional
-    /// groups without a condition stay commented to avoid enabling them accidentally.
-    /// Field doc-comments are printed above assignments or groups, preserving Markdown.
-    /// Group descriptions replace their titles; usage conditions are always printed.
+    /// defaults. Secrets never include a value unless the field declares an `example`; an
+    /// `example` on a field whose type is a nested struct is ignored, because it names a single
+    /// variable. Conditional
+    /// groups are active only when their condition matches the switch default and their parent
+    /// is active. Optional groups without a condition stay commented to avoid enabling them
+    /// accidentally. Field doc-comments are printed above assignments or groups, preserving
+    /// Markdown. Group descriptions replace their titles; usage conditions are always printed.
     /// Empty groups are omitted.
     ///
     /// `used_if` only describes application usage; it does not relax parser requirements.
@@ -277,10 +282,10 @@ fn render_env_items(items: &[UsageItem], active: bool, output: &mut String) {
                 if !active || !field.required {
                     output.push_str("# ");
                 }
-                let value = if field.secret || field.required {
-                    ""
-                } else {
-                    field.default.as_deref().unwrap_or("")
+                let value = match &field.example {
+                    Some(example) => example.as_str(),
+                    None if field.secret || field.required => "",
+                    None => field.default.as_deref().unwrap_or(""),
                 };
                 let _ = writeln!(output, "{}={}", field.name, env_example_value(value));
             }
@@ -375,6 +380,7 @@ pub struct FieldUsageMeta {
     pub used_if: Option<UsageUsedIf>,
     pub secret: bool,
     pub default_note: Option<String>,
+    pub example: Option<String>,
     pub description: Option<String>,
 }
 
@@ -387,6 +393,11 @@ pub fn attach_field_usage(mut tree: UsageTree, meta: FieldUsageMeta) -> Vec<Usag
                 if let UsageItem::Field(field) = item {
                     if meta.description.is_some() {
                         field.description = meta.description.clone();
+                    }
+                    // An example names one variable, so it stays on the leaf it was written on
+                    // instead of being spread over the fields of a nested struct.
+                    if meta.example.is_some() {
+                        field.example = meta.example.clone();
                     }
                 }
             }
@@ -474,6 +485,7 @@ pub fn tagged_enum_usage(
         values: Some(values),
         secret: false,
         default_note: None,
+        example: None,
     })];
 
     for variant in variants {

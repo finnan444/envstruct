@@ -275,3 +275,32 @@ fn multiline_defaults_cannot_inject_active_assignments() {
         "# APP_TEXT=\"hello # \\\"world\\\"\\nINJECTED=yes\\r\\n\\$HOME\\\\path\"\n"
     );
 }
+
+#[test]
+fn examples_fill_variables_that_have_no_default_including_secrets() {
+    #[derive(EnvStruct)]
+    struct Nested {
+        dsn: String,
+    }
+    #[derive(EnvStruct)]
+    struct Config {
+        /// Where the players are stored.
+        #[env(example = "postgres://user:pass@localhost/app")]
+        dsn: String,
+        /// Rotating it logs everyone out.
+        #[env(secret, example = "0123456789abcdef")]
+        gcm_secret: String,
+        #[env(example = "https://example.com/hook")]
+        webhook: Option<String>,
+        /// An example belongs to one variable, so a struct field cannot carry it.
+        #[env(example = "ignored")]
+        nested: Nested,
+    }
+
+    let tree = Config::get_usage_tree("APP", None).unwrap();
+    assert_eq!(
+        tree.to_env_example(),
+        "# Where the players are stored.\nAPP_DSN=postgres://user:pass@localhost/app\n# Rotating it logs everyone out.\nAPP_GCM_SECRET=0123456789abcdef\n# APP_WEBHOOK=https://example.com/hook\n\n# An example belongs to one variable, so a struct field cannot carry it.\nAPP_NESTED_DSN=\n\n"
+    );
+    assert!(!Config::usage().unwrap().contains("postgres://"));
+}

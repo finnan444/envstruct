@@ -1,0 +1,5 @@
+error: env `example` cannot be empty
+ --> tests/compiletest/empty_example.rs:6:9
+  |
+6 |     pub dsn: String,
+  |         ^^^
