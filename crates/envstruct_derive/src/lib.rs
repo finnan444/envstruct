@@ -86,6 +86,7 @@ impl EnvStructVariantReceiver {
         if payload.name.is_some()
             || payload.default.is_some()
             || payload.default_note.is_some()
+            || payload.example.is_some()
             || payload.title.is_some()
             || payload.used_if.is_some()
             || payload.flatten
@@ -124,6 +125,7 @@ struct EnvStructFieldReceiver {
     #[darling(default)]
     secret: bool,
     default_note: Option<String>,
+    example: Option<String>,
 }
 
 impl EnvStructFieldReceiver {
@@ -479,6 +481,33 @@ impl EnvStructInputReceiver {
             );
         }
 
+        if let Some(field) = fields
+            .iter()
+            .find(|field| field.default.is_some() && field.example.is_some())
+        {
+            let span = field
+                .ident
+                .as_ref()
+                .map(|ident| ident.span())
+                .unwrap_or_else(|| field.ty.span());
+            return derive_error(
+                span,
+                "env `default` and `example` cannot be set together, the default is the example",
+            );
+        }
+
+        if let Some(field) = fields
+            .iter()
+            .find(|field| field.example.as_deref() == Some(""))
+        {
+            let span = field
+                .ident
+                .as_ref()
+                .map(|ident| ident.span())
+                .unwrap_or_else(|| field.ty.span());
+            return derive_error(span, "env `example` cannot be empty");
+        }
+
         let field_exprs: Vec<_> = fields
             .iter()
             .enumerate()
@@ -520,6 +549,10 @@ impl EnvStructInputReceiver {
                     Some(note) => quote!(Some(#note.to_string())),
                     None => quote!(None),
                 };
+                let example_expr = match &field.example {
+                    Some(example) => quote!(Some(#example.to_string())),
+                    None => quote!(None),
+                };
                 let used_if = used_if_expr(field, fields);
                 quote_spanned! {field.ty.span() =>
                     ::envstruct::attach_field_usage(
@@ -532,6 +565,7 @@ impl EnvStructInputReceiver {
                             used_if: #used_if,
                             secret: #secret,
                             default_note: #default_note_expr,
+                            example: #example_expr,
                             description: #description,
                         },
                     )

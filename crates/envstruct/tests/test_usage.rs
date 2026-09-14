@@ -1148,9 +1148,10 @@ APP_WORKER_COUNT | usize           | (physical CPU count)
 
 #[test]
 #[serial]
-fn usage_snapshot_escapes_control_chars_in_default() {
+fn usage_snapshot_escapes_control_chars_in_example_and_default() {
     #[derive(EnvStruct, Debug)]
     pub struct Config {
+        #[env(example = "hello\nSECOND=value")]
         pub first: String,
         #[env(default = "a\tb")]
         pub second: String,
@@ -1161,10 +1162,10 @@ fn usage_snapshot_escapes_control_chars_in_default() {
         &usage,
         r#"Environment variables
 
-VARIABLE   | TYPE   | DEFAULT
------------+--------+-----------
-APP_FIRST  | string | <required>
-APP_SECOND | string | "a\tb"
+VARIABLE   | TYPE   | DEFAULT    | EXAMPLE
+-----------+--------+------------+--------------------
+APP_FIRST  | string | <required> | hello\nSECOND=value
+APP_SECOND | string | "a\tb"     |
 "#,
     );
 }

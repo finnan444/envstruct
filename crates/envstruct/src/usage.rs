@@ -114,6 +114,8 @@ pub struct UsageField {
     pub secret: bool,
     /// Runtime-computed default shown in the DEFAULT column in parentheses.
     pub default_note: Option<String>,
+    /// Value written in the env example for a variable that has no default.
+    pub example: Option<String>,
 }
 
 /// A named group of fields and nested groups.
@@ -168,6 +170,7 @@ impl UsageTree {
                 values,
                 secret: false,
                 default_note: None,
+                example: None,
             })],
         }
     }
@@ -177,6 +180,123 @@ impl UsageTree {
         flatten_items(&self.items, &mut entries);
         entries
     }
+
+    /// Renders a `.env.example` without reading the environment.
+    ///
+    /// Only the variables that need a value are written, so the file stays a draft of `.env`
+    /// rather than a copy of the usage table: a variable with a default is left out, and so are
+    /// the descriptions and group titles. A required variable is an assignment of its `example`,
+    /// or an empty one when it declares none, including a `secret`; an `example` on a field
+    /// whose type is a nested struct is ignored, because it names a single variable.
+    ///
+    /// A conditional group is headed by the commented assignment that selects it, which is what
+    /// uncommenting enables. Its variables are active only when the condition matches the switch
+    /// default and the parent is active. Optional groups without a condition stay commented to
+    /// avoid enabling them accidentally. A group with nothing to fill in is omitted.
+    ///
+    /// `used_if` only describes application usage; it does not relax parser requirements.
+    /// Empty assignments are placeholders, and types such as `String` accept them.
+    ///
+    /// ```no_run
+    /// # use envstruct::prelude::*;
+    /// #[derive(EnvStruct)]
+    /// struct Config {
+    ///     /// Port accepting public API requests.
+    ///     port: u16,
+    /// }
+    /// let example = Config::get_usage_tree("APP", None)?.to_env_example();
+    /// std::fs::write(".env.example", example)?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn to_env_example(&self) -> String {
+        let mut output = String::new();
+        render_env_items(
+            &self.items,
+            self.kind != UsageTreeKind::OptionalStruct,
+            &mut output,
+        );
+        while output.ends_with("\n\n") {
+            output.pop();
+        }
+        output
+    }
+}
+
+fn render_env_items(items: &[UsageItem], active: bool, output: &mut String) {
+    for item in items {
+        match item {
+            UsageItem::Field(field) => {
+                if !field.required {
+                    continue;
+                }
+                if !active {
+                    output.push_str("# ");
+                }
+                let value = field.example.as_deref().unwrap_or_default();
+                let _ = writeln!(output, "{}={}", field.name, env_example_value(value));
+            }
+            UsageItem::Group(group) => {
+                if !needs_a_value(&group.items) {
+                    continue;
+                }
+                if group.inline {
+                    render_env_items(&group.items, active, output);
+                    continue;
+                }
+                let selected = match &group.used_if {
+                    Some(condition) => {
+                        blank_line(output);
+                        let _ = writeln!(
+                            output,
+                            "# {}={}",
+                            condition.env_name,
+                            env_example_value(&condition.value)
+                        );
+                        condition.switch_default.as_deref() == Some(condition.value.as_str())
+                    }
+                    None => !group.optional,
+                };
+                render_env_items(&group.items, active && selected, output);
+                if group.used_if.is_some() {
+                    blank_line(output);
+                }
+            }
+        }
+    }
+}
+
+/// Whether anything below needs a value, so that a condition without variables is not printed.
+fn needs_a_value(items: &[UsageItem]) -> bool {
+    items.iter().any(|item| match item {
+        UsageItem::Field(field) => field.required,
+        UsageItem::Group(group) => needs_a_value(&group.items),
+    })
+}
+
+fn blank_line(output: &mut String) {
+    if !output.is_empty() && !output.ends_with("\n\n") {
+        output.push('\n');
+    }
+}
+
+fn env_example_value(value: &str) -> String {
+    if !value
+        .chars()
+        .any(|c| c.is_whitespace() || matches!(c, '#' | '\'' | '"' | '\\' | '$' | '`'))
+    {
+        return value.to_string();
+    }
+    format!(
+        "\"{}\"",
+        value
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('$', "\\$")
+            .replace('`', "\\`")
+            .replace('\n', "\\n")
+            .replace('\r', "\\r")
+            .replace('\t', "\\t")
+    )
 }
 
 fn flatten_items(items: &[UsageItem], entries: &mut Vec<EnvEntry>) {
@@ -201,6 +321,7 @@ pub struct FieldUsageMeta {
     pub used_if: Option<UsageUsedIf>,
     pub secret: bool,
     pub default_note: Option<String>,
+    pub example: Option<String>,
     pub description: Option<String>,
 }
 
@@ -213,6 +334,11 @@ pub fn attach_field_usage(mut tree: UsageTree, meta: FieldUsageMeta) -> Vec<Usag
                 if let UsageItem::Field(field) = item {
                     if meta.description.is_some() {
                         field.description = meta.description.clone();
+                    }
+                    // An example names one variable, so it stays on the leaf it was written on
+                    // instead of being spread over the fields of a nested struct.
+                    if meta.example.is_some() {
+                        field.example = meta.example.clone();
                     }
                 }
             }
@@ -298,6 +424,7 @@ pub fn tagged_enum_usage(
         values: Some(values),
         secret: false,
         default_note: None,
+        example: None,
     })];
 
     for variant in variants {
@@ -578,6 +705,7 @@ fn section_marker(group: &UsageGroup, path: &str) -> String {
 
 fn render_blocks(out: &mut String, blocks: &[UsageBlock]) {
     let rows = table_rows(blocks);
+    let with_example = rows.iter().any(|(field, _)| field.example.is_some());
     let markers: Vec<&str> = blocks
         .iter()
         .filter_map(|block| match block {
@@ -585,9 +713,9 @@ fn render_blocks(out: &mut String, blocks: &[UsageBlock]) {
             UsageBlock::Fields(_) => None,
         })
         .collect();
-    let widths = column_widths(&rows, &markers);
+    let widths = column_widths(&rows, &markers, with_example);
     if !rows.is_empty() {
-        out.push_str(&format_row(&header_cols(), &widths));
+        out.push_str(&format_row(&header_cols(with_example), &widths));
         let _ = writeln!(out);
         out.push_str(&format_header_rule(&widths));
         let _ = writeln!(out);
@@ -604,7 +732,10 @@ fn render_blocks(out: &mut String, blocks: &[UsageBlock]) {
             }
         };
         for field in fields {
-            out.push_str(&format_wrapped_row(&field_columns(field, indent), &widths));
+            out.push_str(&format_wrapped_row(
+                &field_columns(field, indent, with_example),
+                &widths,
+            ));
         }
     }
 }
@@ -623,20 +754,36 @@ fn table_rows(blocks: &[UsageBlock]) -> Vec<(&UsageField, &'static str)> {
     rows
 }
 
-fn header_cols() -> Vec<String> {
-    vec![
+/// The EXAMPLE column is added only when a variable declares an example, so a table without
+/// examples keeps its three columns.
+fn header_cols(with_example: bool) -> Vec<String> {
+    let mut cols = vec![
         "VARIABLE".to_string(),
         "TYPE".to_string(),
         "DEFAULT".to_string(),
-    ]
+    ];
+    if with_example {
+        cols.push("EXAMPLE".to_string());
+    }
+    cols
 }
 
-fn field_columns(field: &UsageField, indent: &str) -> Vec<String> {
-    vec![
+fn field_columns(field: &UsageField, indent: &str, with_example: bool) -> Vec<String> {
+    let mut cols = vec![
         field_name_cell(field, indent),
         type_cell(field),
         display_default(field),
-    ]
+    ];
+    if with_example {
+        cols.push(
+            field
+                .example
+                .as_deref()
+                .map(escape_cell)
+                .unwrap_or_default(),
+        );
+    }
+    cols
 }
 
 fn field_name_cell(field: &UsageField, indent: &str) -> String {
@@ -663,14 +810,17 @@ fn type_cell(field: &UsageField) -> String {
     }
 }
 
-fn column_widths(rows: &[(&UsageField, &str)], markers: &[&str]) -> Vec<usize> {
-    let headers = header_cols();
+fn column_widths(rows: &[(&UsageField, &str)], markers: &[&str], with_example: bool) -> Vec<usize> {
+    let headers = header_cols(with_example);
     let mut widths: Vec<usize> = headers.iter().map(|h| h.chars().count()).collect();
     for marker in markers {
         widths[0] = widths[0].max(marker.chars().count());
     }
     for (field, indent) in rows {
-        for (i, col) in field_columns(field, indent).iter().enumerate() {
+        for (i, col) in field_columns(field, indent, with_example)
+            .iter()
+            .enumerate()
+        {
             if i == 0 {
                 widths[i] = widths[i].max(col.chars().count());
             } else {
@@ -686,6 +836,8 @@ fn column_widths(rows: &[(&UsageField, &str)], markers: &[&str]) -> Vec<usize> {
     widths
 }
 
+/// EXAMPLE is meant to be copied as it stands, so it is never cut; a long value only makes
+/// its own line longer, because it is the last column.
 fn wrap_width_for(col: usize) -> usize {
     match col {
         1 | 2 => WRAP_WIDTH,
