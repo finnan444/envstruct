@@ -132,3 +132,52 @@ fn test_alias_of_the_same_type_is_accepted() {
     assert_eq!(config.primary.host, "localhost");
     assert_eq!(config.replica.unwrap().host, "localhost");
 }
+
+#[derive(EnvStruct, Debug, PartialEq)]
+#[env(tag = "mode")]
+pub enum Colors {
+    Red,
+    Blue,
+}
+
+#[derive(EnvStruct, Debug, PartialEq)]
+#[env(tag = "mode")]
+pub enum Speeds {
+    Red,
+    Fast,
+}
+
+/// Two enums claim one tag variable while accepting different values.
+#[derive(EnvStruct, Debug, PartialEq)]
+pub struct TwoTags {
+    #[env(flatten, default = "red")]
+    pub colors: Colors,
+
+    #[env(flatten, default = "red")]
+    pub speeds: Speeds,
+}
+
+#[test]
+#[serial]
+fn test_two_tags_on_one_var_are_rejected() {
+    clean_env();
+    env::set_var("TEST_MODE", "red");
+
+    let error = TwoTags::with_prefix("TEST").unwrap_err();
+    assert!(
+        matches!(&error, EnvStructError::DuplicateEnvVar { name, .. } if name == "TEST_MODE"),
+        "unexpected error: {error}"
+    );
+}
+
+#[test]
+#[serial]
+fn test_duplicate_error_names_the_flattened_struct() {
+    clean_env();
+    let error = Collide::with_prefix("TEST").unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "Configuration from environment variables failed. Environment variable `TEST_HOST` \
+         is declared twice, in `Db` and in the top level"
+    );
+}

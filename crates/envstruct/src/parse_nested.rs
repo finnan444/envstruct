@@ -1,4 +1,4 @@
-use crate::*;
+use crate::{strict::check_unknown_vars, *};
 use pastey::paste;
 
 /// Trait for parsing nested environment variables.
@@ -34,7 +34,7 @@ pub trait EnvParseNested {
     }
 
     /// Parses with a prefix, and additionally fails when the environment holds a variable
-    /// with that prefix that no field of this config declares — a typo, or a name left
+    /// with that prefix that no field of this config declares, such as a typo or a name left
     /// behind by a rename, which would otherwise be ignored until the value is missed.
     ///
     /// # Arguments
@@ -73,7 +73,7 @@ pub trait EnvParseNested {
         let prefix = prefix.as_ref();
         let tree = Self::get_usage_tree(prefix, None)?;
         tree.check_duplicates()?;
-        crate::strict::check_unknown_vars(prefix, &tree.flatten_entries(), allowed)?;
+        check_unknown_vars(prefix, &tree.flatten_entries(), allowed)?;
         Self::parse_from_env_var(prefix, None)
     }
 

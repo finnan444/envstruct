@@ -1,5 +1,5 @@
 use crate::*;
-use std::fmt::Write as _;
+use std::{collections::HashMap, fmt::Write as _};
 
 /// Represents an environment variable entry with its name, type, and optional default value.
 pub struct EnvEntry {
@@ -184,9 +184,10 @@ impl UsageTree {
     /// Fails when two fields that can be read at the same time disagree about one variable,
     /// which happens when a nested struct is flattened onto a name that a sibling already uses.
     ///
-    /// Two declarations of the same type and default are an alias, the way two flattened
-    /// structs read one set of variables, and are left alone. Variants of an enum selected by
-    /// a tag exclude each other, so the same variable may be declared once per variant.
+    /// Two declarations that expect the same type, default and values are an alias, the way
+    /// two flattened structs read one set of variables, and are left alone. Variants of an enum
+    /// selected by a tag exclude each other, so the same variable may be declared once per
+    /// variant.
     ///
     /// # Errors
     ///
@@ -195,10 +196,11 @@ impl UsageTree {
         let mut declarations = Vec::new();
         collect_declarations(&self.items, &[], &[], &mut declarations);
 
-        for (index, declaration) in declarations.iter().enumerate() {
-            for earlier in &declarations[..index] {
-                if earlier.name != declaration.name
-                    || earlier.is_alias_of(declaration)
+        let mut by_name: HashMap<&str, Vec<&Declaration>> = HashMap::new();
+        for declaration in &declarations {
+            let same_name = by_name.entry(declaration.name).or_default();
+            for earlier in same_name.iter() {
+                if earlier.is_alias_of(declaration)
                     || mutually_exclusive(&earlier.conditions, &declaration.conditions)
                 {
                     continue;
@@ -209,6 +211,7 @@ impl UsageTree {
                     second: declaration.location(),
                 });
             }
+            same_name.push(declaration);
         }
         Ok(())
     }
@@ -337,6 +340,7 @@ struct Declaration<'a> {
     name: &'a str,
     typ: &'a UsageType,
     default: Option<&'a str>,
+    values: Option<&'a [String]>,
     path: Vec<&'a str>,
     conditions: Vec<(&'a str, &'a str)>,
 }
@@ -345,7 +349,7 @@ impl Declaration<'_> {
     /// Whether the two read one variable the same way, so that neither can see a value the
     /// other did not expect.
     fn is_alias_of(&self, other: &Declaration<'_>) -> bool {
-        self.typ == other.typ && self.default == other.default
+        self.typ == other.typ && self.default == other.default && self.values == other.values
     }
 
     fn location(&self) -> String {
@@ -368,6 +372,7 @@ fn collect_declarations<'a>(
                 name: &field.name,
                 typ: &field.typ,
                 default: field.default.as_deref(),
+                values: field.values.as_deref(),
                 path: path.to_vec(),
                 conditions: conditions.to_vec(),
             }),
@@ -442,19 +447,17 @@ pub fn attach_field_usage(mut tree: UsageTree, meta: FieldUsageMeta) -> Vec<Usag
             tree.items
         }
         UsageTreeKind::Struct | UsageTreeKind::OptionalStruct => {
+            // An inlined group renders as the fields of its parent, and is kept so that a
+            // collision can still name the struct a variable was declared in.
             let inline = should_inline(&tree, &meta);
-            if inline && meta.description.is_none() {
-                tree.items
-            } else {
-                vec![UsageItem::Group(UsageGroup {
-                    title: choose_title(&tree, &meta),
-                    description: meta.description,
-                    inline,
-                    optional: tree.kind == UsageTreeKind::OptionalStruct,
-                    used_if: meta.used_if,
-                    items: tree.items,
-                })]
-            }
+            vec![UsageItem::Group(UsageGroup {
+                title: choose_title(&tree, &meta),
+                description: meta.description,
+                inline,
+                optional: tree.kind == UsageTreeKind::OptionalStruct,
+                used_if: meta.used_if,
+                items: tree.items,
+            })]
         }
     }
 }

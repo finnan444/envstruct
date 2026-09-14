@@ -101,3 +101,19 @@ fn test_without_strict_unknown_vars_are_ignored() {
 
     assert!(Config::with_prefix("TEST").is_ok());
 }
+
+#[derive(EnvStruct, Debug)]
+pub struct WithMap {
+    pub labels: EnvMap<String, String>,
+}
+
+#[test]
+#[serial]
+fn test_strict_accepts_the_keys_of_a_map() {
+    clean_env();
+    env::set_var("TEST_LABELS_TEAM", "core");
+    env::set_var("TEST_LABELS_TIER", "web");
+
+    let config = WithMap::with_prefix_strict("TEST").unwrap();
+    assert_eq!(config.labels.get("TEAM").map(String::as_str), Some("core"));
+}

@@ -3,9 +3,15 @@ use std::collections::HashSet;
 
 /// Fails when the environment holds a variable with this prefix that no field declares.
 ///
-/// The environment is shared with the platform, so an unknown variable is not always a
-/// mistake of the config: `allowed` lists the names to pass over, with a trailing `*`
-/// matching any suffix.
+/// A declared name ending in `*`, the way a map declares the keys it reads, covers every
+/// name that starts with it. The environment is shared with the platform, so an unknown
+/// variable is not always a mistake of the config: `allowed` lists the names to pass over,
+/// with a trailing `*` matching any suffix as well.
+///
+/// # Errors
+///
+/// Returns `UnknownEnvVars` listing the variables nothing reads, or `StrictWithoutPrefix`
+/// when the prefix is empty, which would make every variable of the process unknown.
 pub(crate) fn check_unknown_vars(
     prefix: &str,
     entries: &[EnvEntry],
@@ -16,12 +22,21 @@ pub(crate) fn check_unknown_vars(
     }
 
     let declared: HashSet<&str> = entries.iter().map(|entry| entry.name.as_str()).collect();
+    let declared_patterns: Vec<&str> = declared
+        .iter()
+        .filter(|name| name.ends_with('*'))
+        .copied()
+        .collect();
     let scope = format!("{}_", concat_env_name(prefix, ""));
 
     let mut unknown: Vec<UnknownEnvVar> = std::env::vars_os()
         .filter_map(|(name, _)| name.into_string().ok())
         .filter(|name| name.starts_with(&scope))
-        .filter(|name| !declared.contains(name.as_str()) && !is_allowed(name, allowed))
+        .filter(|name| {
+            !declared.contains(name.as_str())
+                && !matches_any(name, &declared_patterns)
+                && !matches_any(name, allowed)
+        })
         .map(|name| UnknownEnvVar {
             suggestion: nearest_name(&name, &declared),
             name,
@@ -39,8 +54,9 @@ pub(crate) fn check_unknown_vars(
     })
 }
 
-fn is_allowed(name: &str, allowed: &[&str]) -> bool {
-    allowed
+/// Whether a name is one of the patterns, where a trailing `*` matches any suffix.
+fn matches_any(name: &str, patterns: &[&str]) -> bool {
+    patterns
         .iter()
         .any(|pattern| match pattern.strip_suffix('*') {
             Some(head) => name.starts_with(head),
@@ -50,9 +66,9 @@ fn is_allowed(name: &str, allowed: &[&str]) -> bool {
 
 /// The declared name an unknown variable is close enough to be a typo of.
 fn nearest_name(name: &str, declared: &HashSet<&str>) -> Option<String> {
-    // A suggestion only helps while it stays a plausible misspelling, so allow one edit per
-    // three characters and never more than a third of the name.
-    let limit = (name.chars().count() / 3).min(3);
+    // A suggestion only helps while it stays a plausible misspelling: one edit per four
+    // characters, and at most the two a transposition costs.
+    let limit = (name.chars().count() / 4).min(2);
     if limit == 0 {
         return None;
     }

@@ -163,16 +163,16 @@ pub struct Config {
 
 ```text
 Configuration from environment variables failed. Environment variable `APP_HOST` is declared
-twice, in the top level and in `Db`
+twice, in `Db` and in the top level
 ```
 
-Two declarations of the same type and default read one variable the same way, so flattening
-two structs onto one set of variables keeps working. Variants of an enum selected by a tag
+Two declarations that expect the same type, default and values read one variable the same
+way, so flattening two structs onto one set of variables keeps working. Variants of an enum selected by a tag
 exclude each other and may each declare the same variable.
 
 `with_prefix_strict` additionally refuses to start when the environment holds a variable with
-the prefix of the configuration that no field declares — a typo, or a name left behind by a
-rename, which is otherwise ignored until the value is missed:
+the prefix of the configuration that no field declares, such as a typo or a name left behind
+by a rename, which is otherwise ignored until the value is missed:
 
 ```rust
 let config = Config::with_prefix_strict("APP")?;
@@ -183,7 +183,8 @@ Configuration from environment variables failed. Unknown environment variables w
 `APP`: `APP_PROT` (did you mean `APP_PORT`?)
 ```
 
-The variables of a variant that is not selected are declared, so they are not unknown. The
+The variables of a variant that is not selected are declared, so they are not unknown, and a
+variable read by an `EnvMap` is covered by the `PREFIX_*` entry the map declares. The
 environment is shared with the platform, which puts its own variables under any prefix, so
 `with_prefix_strict_allowing("APP", &["APP_OTEL_*", "APP_BUILD"])` passes over the names
 another library reads, where a trailing `*` matches any suffix. Strict mode needs a prefix to
