@@ -333,13 +333,13 @@ fn usage_snapshot_of_an_enum_with_data() {
     let usage = DoomConfig::usage_with_prefix("DOOM").unwrap();
     let expected = r#"Environment variables
 
-VARIABLE                 | TYPE                | DEFAULT
--------------------------+---------------------+-----------
-DOOM_RELOAD_DELAY        | duration            | "60s"
-DOOM_MODE                | enum: local, remote | "local"
+VARIABLE                 | TYPE                | DEFAULT    | FIELD
+-------------------------+---------------------+------------+------------------------
+DOOM_RELOAD_DELAY        | duration            | "60s"      | DoomConfig.reload_delay
+DOOM_MODE                | enum: local, remote | "local"    | DoomConfig.backend
 [DOOM_MODE=remote]
-  DOOM_REMOTE_CACHE_SIZE | u32                 | "10000"
-  DOOM_REMOTE_DSN        | string              | <required>
+  DOOM_REMOTE_CACHE_SIZE | u32                 | "10000"    | RemoteConfig.cache_size
+  DOOM_REMOTE_DSN        | string              | <required> | RemoteConfig.dsn
 "#;
     if usage != expected {
         panic!("usage snapshot mismatch\n=== actual ===\n{usage}=== expected ===\n{expected}");

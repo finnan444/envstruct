@@ -92,7 +92,7 @@ fn main() -> Result<(), envstruct::EnvStructError> {
 - `example`: Value written for this variable in the env example, which lists the variables that need one, and shown in the EXAMPLE column of the usage table, as in `#[env(example = "postgres://user:pass@localhost/app")]`. It applies to one variable, including a `secret` one, and is ignored on a field whose type is a nested struct. It cannot be empty, nor combined with `default`, which is already the example.
 - `tag`: On an enum, the variable that selects the variant, as in `#[env(tag = "mode")]`. On a variant of such an enum, `name` renames the value that selects it and `flatten` drops its segment from the names of its payload.
 
-DEFAULT is a quoted literal, a note in parentheses for a runtime default, `none` when an optional variable may be omitted, or `<required>` when a required variable has no default. A required field with `default_note` shows `<required> (note)` because the note does not supply a parser default. EXAMPLE is the last column, present only when at least one variable declares an `example`.
+DEFAULT is a quoted literal, a note in parentheses for a runtime default, `none` when an optional variable may be omitted, or `<required>` when a required variable has no default. A required field with `default_note` shows `<required> (note)` because the note does not supply a parser default. EXAMPLE is present only when at least one variable declares an `example`. FIELD is the last column and names the declaration a variable is read from, as `Struct.field`, so that a value in the environment leads back to the code that reads it; the tag of an enum with data names the field holding the enum.
 
 ## Enums with data
 
@@ -131,11 +131,11 @@ pub struct DeployConfig {
 With the prefix `DEPLOY`, `DEPLOY_MODE` selects the variant:
 
 ```text
-VARIABLE             | TYPE                | DEFAULT
----------------------+---------------------+-----------
-DEPLOY_MODE          | enum: local, remote | "local"
+VARIABLE             | TYPE                | DEFAULT    | FIELD
+---------------------+---------------------+------------+---------------------
+DEPLOY_MODE          | enum: local, remote | "local"    | DeployConfig.backend
 [DEPLOY_MODE=remote]
-  DEPLOY_REMOTE_DSN  | string              | <required>
+  DEPLOY_REMOTE_DSN  | string              | <required> | RemoteConfig.dsn
 ```
 
 - A bracketed condition heads the variables of a variant, and a variant without variables of its own is not listed.

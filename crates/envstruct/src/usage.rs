@@ -116,6 +116,8 @@ pub struct UsageField {
     pub default_note: Option<String>,
     /// Value written in the env example for a variable that has no default.
     pub example: Option<String>,
+    /// Struct and field the variable is declared on, as `Struct.field`.
+    pub defined_in: Option<String>,
 }
 
 /// A named group of fields and nested groups.
@@ -171,6 +173,7 @@ impl UsageTree {
                 secret: false,
                 default_note: None,
                 example: None,
+                defined_in: None,
             })],
         }
     }
@@ -416,6 +419,7 @@ fn flatten_items(items: &[UsageItem], entries: &mut Vec<EnvEntry>) {
 
 /// Field-level metadata supplied by the derive macro when attaching a nested type.
 pub struct FieldUsageMeta {
+    pub struct_name: &'static str,
     pub field_name: &'static str,
     pub title: Option<String>,
     pub flatten: bool,
@@ -430,6 +434,10 @@ pub struct FieldUsageMeta {
 /// Wraps a field's usage tree as parent-group items.
 pub fn attach_field_usage(mut tree: UsageTree, meta: FieldUsageMeta) -> Vec<UsageItem> {
     apply_usage_flags(&mut tree.items, meta.secret, meta.default_note.as_deref());
+    apply_defined_in(
+        &mut tree.items,
+        &format!("{}.{}", meta.struct_name, meta.field_name),
+    );
     match tree.kind {
         UsageTreeKind::Leaf => {
             for item in &mut tree.items {
@@ -481,6 +489,22 @@ fn apply_usage_flags(items: &mut [UsageItem], secret: bool, default_note: Option
     }
 }
 
+/// Names the struct a variable is declared on. A nested struct has already named the fields
+/// it declares itself, so only the ones still unnamed take the field they were reached
+/// through: a leaf, or the tag of an enum with data, which the parent declares.
+fn apply_defined_in(items: &mut [UsageItem], defined_in: &str) {
+    for item in items {
+        match item {
+            UsageItem::Field(field) => {
+                if field.defined_in.is_none() {
+                    field.defined_in = Some(defined_in.to_string());
+                }
+            }
+            UsageItem::Group(group) => apply_defined_in(&mut group.items, defined_in),
+        }
+    }
+}
+
 /// One variant of an enum selected by a tag variable, as it appears in usage output.
 pub struct TaggedVariant {
     value: String,
@@ -527,6 +551,7 @@ pub fn tagged_enum_usage(
         secret: false,
         default_note: None,
         example: None,
+        defined_in: None,
     })];
 
     for variant in variants {
@@ -857,7 +882,8 @@ fn table_rows(blocks: &[UsageBlock]) -> Vec<(&UsageField, &'static str)> {
 }
 
 /// The EXAMPLE column is added only when a variable declares an example, so a table without
-/// examples keeps its three columns.
+/// examples keeps its three columns. FIELD names the declaration every variable is read
+/// from, so it is always the last column.
 fn header_cols(with_example: bool) -> Vec<String> {
     let mut cols = vec![
         "VARIABLE".to_string(),
@@ -867,6 +893,7 @@ fn header_cols(with_example: bool) -> Vec<String> {
     if with_example {
         cols.push("EXAMPLE".to_string());
     }
+    cols.push("FIELD".to_string());
     cols
 }
 
@@ -879,6 +906,7 @@ fn field_columns(field: &UsageField, indent: &str, with_example: bool) -> Vec<St
     if with_example {
         cols.push(field.example.as_deref().map(escape_cell).unwrap_or_default());
     }
+    cols.push(field.defined_in.clone().unwrap_or_default());
     cols
 }
 
@@ -932,8 +960,8 @@ fn column_widths(rows: &[(&UsageField, &str)], markers: &[&str], with_example: b
     widths
 }
 
-/// EXAMPLE is meant to be copied as it stands, so it is never cut; a long value only makes
-/// its own line longer, because it is the last column.
+/// EXAMPLE is meant to be copied as it stands and FIELD to be searched for, so neither is
+/// cut; a long value only makes its own line longer, because both trail the wrapped columns.
 fn wrap_width_for(col: usize) -> usize {
     match col {
         1 | 2 => WRAP_WIDTH,
