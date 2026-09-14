@@ -129,14 +129,16 @@ pub struct DeployConfig {
 With the prefix `DEPLOY`, `DEPLOY_MODE` selects the variant:
 
 ```text
-VARIABLE                                  | TYPE                | DEFAULT
-------------------------------------------+---------------------+-----------
-DEPLOY_MODE                               | enum: local, remote | "local"
-[selected when DEPLOY_MODE=local (default)]
-[selected when DEPLOY_MODE=remote]
-  DEPLOY_REMOTE_DSN                       | string              | <required>
+A bracketed condition, such as [MODE=local], applies to the variables listed under it.
+
+VARIABLE             | TYPE                | DEFAULT
+---------------------+---------------------+-----------
+DEPLOY_MODE          | enum: local, remote | "local"
+[DEPLOY_MODE=remote]
+  DEPLOY_REMOTE_DSN  | string              | <required>
 ```
 
+- A bracketed condition heads the variables of a variant, and a variant without variables of its own is not listed. A note above the table explains the brackets.
 - A variant is a unit variant or a newtype variant holding one configuration; other shapes are rejected at compile time.
 - The value selecting a variant is its name in snake case (`Remote` becomes `remote`), or `#[env(name = "...")]`.
 - The payload of `Remote` parses from `DEPLOY_REMOTE_`; `#[env(flatten)]` on the variant parses it from `DEPLOY_` instead. Both the parser and the help use the same names.

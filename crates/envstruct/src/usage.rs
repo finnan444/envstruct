@@ -569,6 +569,8 @@ const NO_DEFAULT: &str = "<required>";
 const WRAP_WIDTH: usize = 40;
 /// Rows of a conditional group are indented under its marker line.
 const INDENT: &str = "  ";
+const CONDITION_NOTE: &str =
+    "A bracketed condition, such as [MODE=local], applies to the variables listed under it.";
 const COL_SEP: &str = " | ";
 const HEADER_RULE_SEP: &str = "-+-";
 
@@ -576,6 +578,9 @@ enum UsageBlock {
     Fields(Vec<UsageField>),
     Section {
         marker: String,
+        /// The marker is a tag condition such as `[MODE=local]`, explained by a note above the
+        /// table.
+        condition: bool,
         fields: Vec<UsageField>,
     },
 }
@@ -585,10 +590,21 @@ fn render_usage(tree: &UsageTree) -> String {
     let _ = writeln!(out, "Environment variables");
 
     let blocks = collect_blocks(tree);
-    let syntax = syntax_notes(tree);
-    if !syntax.is_empty() {
+    let mut notes = syntax_notes(tree);
+    if blocks.iter().any(|block| {
+        matches!(
+            block,
+            UsageBlock::Section {
+                condition: true,
+                ..
+            }
+        )
+    }) {
+        notes.push(CONDITION_NOTE.to_string());
+    }
+    if !notes.is_empty() {
         let _ = writeln!(out);
-        for line in syntax {
+        for line in notes {
             let _ = writeln!(out, "{line}");
         }
     }
@@ -703,8 +719,10 @@ fn emit_group(group: UsageGroup, parent_path: &str, blocks: &mut Vec<UsageBlock>
     if group.optional || group.used_if.is_some() {
         let (fields, children) = split_items(&group.items);
         if !fields.is_empty() {
+            let (marker, condition) = section_marker(&group, &path);
             blocks.push(UsageBlock::Section {
-                marker: section_marker(&group, &path),
+                marker,
+                condition,
                 fields,
             });
         }
@@ -742,19 +760,22 @@ fn group_path(parent_path: &str, title: &str) -> String {
     }
 }
 
-fn section_marker(group: &UsageGroup, path: &str) -> String {
-    let mut parts = Vec::new();
-    if let Some(used_if) = &group.used_if {
-        let verb = if used_if.enforced { "selected" } else { "used" };
-        let mut cond = format!("{verb} when {}={}", used_if.env_name, used_if.value);
-        if used_if.switch_default.as_deref() == Some(used_if.value.as_str()) {
-            cond.push_str(" (default)");
-        }
-        parts.push(cond);
+/// Returns the bracketed line above a section and whether it is a tag condition.
+fn section_marker(group: &UsageGroup, path: &str) -> (String, bool) {
+    let Some(used_if) = &group.used_if else {
+        return (format!("[{path}]"), false);
+    };
+    // The parser selects the group by the tag, so the condition alone reads as the heading;
+    // a `used_if` condition is application usage and says so.
+    let mut cond = if used_if.enforced {
+        format!("{}={}", used_if.env_name, used_if.value)
     } else {
-        parts.push(path.to_string());
+        format!("used when {}={}", used_if.env_name, used_if.value)
+    };
+    if used_if.switch_default.as_deref() == Some(used_if.value.as_str()) {
+        cond.push_str(" (default)");
     }
-    format!("[{}]", parts.join("; "))
+    (format!("[{cond}]"), used_if.enforced)
 }
 
 fn render_blocks(out: &mut String, blocks: &[UsageBlock]) {
@@ -779,7 +800,7 @@ fn render_blocks(out: &mut String, blocks: &[UsageBlock]) {
     for block in blocks {
         let (fields, indent) = match block {
             UsageBlock::Fields(fields) => (fields, ""),
-            UsageBlock::Section { marker, fields } => {
+            UsageBlock::Section { marker, fields, .. } => {
                 let _ = writeln!(out, "{marker}");
                 (fields, INDENT)
             }
