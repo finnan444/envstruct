@@ -12,7 +12,7 @@ pub trait EnvParseNested {
     where
         Self: Sized,
     {
-        Self::parse_from_env_var("", None)
+        Self::with_prefix("")
     }
 
     /// Creates a new instance with a specified prefix by parsing environment variables.
@@ -23,11 +23,57 @@ pub trait EnvParseNested {
     ///
     /// # Errors
     ///
-    /// Returns an `EnvStructError` if parsing fails.
+    /// Returns an `EnvStructError` if parsing fails, or if two fields claim one variable.
     fn with_prefix(prefix: impl AsRef<str>) -> Result<Self, EnvStructError>
     where
         Self: Sized,
     {
+        let prefix = prefix.as_ref();
+        Self::get_usage_tree(prefix, None)?.check_duplicates()?;
+        Self::parse_from_env_var(prefix, None)
+    }
+
+    /// Parses with a prefix, and additionally fails when the environment holds a variable
+    /// with that prefix that no field of this config declares — a typo, or a name left
+    /// behind by a rename, which would otherwise be ignored until the value is missed.
+    ///
+    /// # Arguments
+    ///
+    /// * `prefix` - A prefix for the environment variables, which must not be empty.
+    ///
+    /// # Errors
+    ///
+    /// Returns `UnknownEnvVars` listing the variables nothing reads, or
+    /// `StrictWithoutPrefix` when the prefix is empty, besides the errors of `with_prefix`.
+    fn with_prefix_strict(prefix: impl AsRef<str>) -> Result<Self, EnvStructError>
+    where
+        Self: Sized,
+    {
+        Self::with_prefix_strict_allowing(prefix, &[])
+    }
+
+    /// Parses in strict mode, passing over the variables the platform or another library
+    /// puts under the same prefix.
+    ///
+    /// # Arguments
+    ///
+    /// * `prefix` - A prefix for the environment variables, which must not be empty.
+    /// * `allowed` - Names to accept as unknown, where a trailing `*` matches any suffix.
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors of `with_prefix_strict` for the variables left unmatched.
+    fn with_prefix_strict_allowing(
+        prefix: impl AsRef<str>,
+        allowed: &[&str],
+    ) -> Result<Self, EnvStructError>
+    where
+        Self: Sized,
+    {
+        let prefix = prefix.as_ref();
+        let tree = Self::get_usage_tree(prefix, None)?;
+        tree.check_duplicates()?;
+        crate::strict::check_unknown_vars(prefix, &tree.flatten_entries(), allowed)?;
         Self::parse_from_env_var(prefix, None)
     }
 

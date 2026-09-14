@@ -181,6 +181,38 @@ impl UsageTree {
         entries
     }
 
+    /// Fails when two fields that can be read at the same time disagree about one variable,
+    /// which happens when a nested struct is flattened onto a name that a sibling already uses.
+    ///
+    /// Two declarations of the same type and default are an alias, the way two flattened
+    /// structs read one set of variables, and are left alone. Variants of an enum selected by
+    /// a tag exclude each other, so the same variable may be declared once per variant.
+    ///
+    /// # Errors
+    ///
+    /// Returns `DuplicateEnvVar` naming the variable and both groups it was declared in.
+    pub fn check_duplicates(&self) -> Result<(), EnvStructError> {
+        let mut declarations = Vec::new();
+        collect_declarations(&self.items, &[], &[], &mut declarations);
+
+        for (index, declaration) in declarations.iter().enumerate() {
+            for earlier in &declarations[..index] {
+                if earlier.name != declaration.name
+                    || earlier.is_alias_of(declaration)
+                    || mutually_exclusive(&earlier.conditions, &declaration.conditions)
+                {
+                    continue;
+                }
+                return Err(EnvStructError::DuplicateEnvVar {
+                    name: declaration.name.to_string(),
+                    first: earlier.location(),
+                    second: declaration.location(),
+                });
+            }
+        }
+        Ok(())
+    }
+
     /// Renders a `.env.example` without reading the environment.
     ///
     /// Only the variables that need a value are written, so the file stays a draft of `.env`
@@ -297,6 +329,71 @@ fn env_example_value(value: &str) -> String {
             .replace('\r', "\\r")
             .replace('\t', "\\t")
     )
+}
+
+/// One declared variable with the groups it was reached through and the conditions the
+/// parser enforces to read it.
+struct Declaration<'a> {
+    name: &'a str,
+    typ: &'a UsageType,
+    default: Option<&'a str>,
+    path: Vec<&'a str>,
+    conditions: Vec<(&'a str, &'a str)>,
+}
+
+impl Declaration<'_> {
+    /// Whether the two read one variable the same way, so that neither can see a value the
+    /// other did not expect.
+    fn is_alias_of(&self, other: &Declaration<'_>) -> bool {
+        self.typ == other.typ && self.default == other.default
+    }
+
+    fn location(&self) -> String {
+        if self.path.is_empty() {
+            return "the top level".to_string();
+        }
+        format!("`{}`", self.path.join(" > "))
+    }
+}
+
+fn collect_declarations<'a>(
+    items: &'a [UsageItem],
+    path: &[&'a str],
+    conditions: &[(&'a str, &'a str)],
+    declarations: &mut Vec<Declaration<'a>>,
+) {
+    for item in items {
+        match item {
+            UsageItem::Field(field) => declarations.push(Declaration {
+                name: &field.name,
+                typ: &field.typ,
+                default: field.default.as_deref(),
+                path: path.to_vec(),
+                conditions: conditions.to_vec(),
+            }),
+            UsageItem::Group(group) => {
+                let mut path = path.to_vec();
+                path.push(&group.title);
+                let mut conditions = conditions.to_vec();
+                if let Some(used_if) = &group.used_if {
+                    if used_if.enforced {
+                        conditions.push((&used_if.env_name, &used_if.value));
+                    }
+                }
+                collect_declarations(&group.items, &path, &conditions, declarations);
+            }
+        }
+    }
+}
+
+/// Whether two sets of conditions disagree on the value of a variable, so that at most one of
+/// the two groups is ever read.
+fn mutually_exclusive(left: &[(&str, &str)], right: &[(&str, &str)]) -> bool {
+    left.iter().any(|(name, value)| {
+        right
+            .iter()
+            .any(|(other_name, other_value)| other_name == name && other_value != value)
+    })
 }
 
 fn flatten_items(items: &[UsageItem], entries: &mut Vec<EnvEntry>) {
