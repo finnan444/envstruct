@@ -5,6 +5,7 @@ mod env_map;
 mod error;
 mod parse_nested;
 mod parse_primitive;
+mod strict;
 mod usage;
 mod with_json;
 

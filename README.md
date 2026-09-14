@@ -60,6 +60,7 @@ fn main() -> Result<(), envstruct::EnvStructError> {
 - Prefix Support: Handle environment variables with a common prefix.
 - Default Values: Set default values for environment variables.
 - Error Handling: Get detailed error messages for troubleshooting.
+- Strict Mode: Fail on start for variables with the prefix that no field reads.
 - Testing: Well-tested library with many test cases.
 - Derive Macros: Clean and readable code with derive macros.
 
@@ -144,6 +145,50 @@ DEPLOY_MODE          | enum: local, remote | "local"
 - The payload keeps its own required fields and defaults; variables of the variants that are not selected are never parsed.
 - The default variant is the default of the field holding the enum, as for any other value. Without one, a missing tag variable is a missing required variable.
 - An unknown value names the values that would work.
+
+## Checking the environment
+
+`with_prefix` refuses a configuration whose fields disagree about a variable, which is what a
+`flatten` onto a name a sibling already uses produces:
+
+```rust
+#[derive(EnvStruct, Debug)]
+pub struct Config {
+    #[env(flatten)]
+    pub db: Db, // declares APP_HOST as a string
+
+    pub host: u16, // declares APP_HOST as a port
+}
+```
+
+```text
+Configuration from environment variables failed. Environment variable `APP_HOST` is declared
+twice, in `Db` and in the top level
+```
+
+Two declarations that expect the same type, default and values read one variable the same
+way, so flattening two structs onto one set of variables keeps working. Variants of an enum selected by a tag
+exclude each other and may each declare the same variable.
+
+`with_prefix_strict` additionally refuses to start when the environment holds a variable with
+the prefix of the configuration that no field declares, such as a typo or a name left behind
+by a rename, which is otherwise ignored until the value is missed:
+
+```rust
+let config = Config::with_prefix_strict("APP")?;
+```
+
+```text
+Configuration from environment variables failed. Unknown environment variables with prefix
+`APP`: `APP_PROT` (did you mean `APP_PORT`?)
+```
+
+The variables of a variant that is not selected are declared, so they are not unknown, and a
+variable read by an `EnvMap` is covered by the `PREFIX_*` entry the map declares. The
+environment is shared with the platform, which puts its own variables under any prefix, so
+`with_prefix_strict_allowing("APP", &["APP_OTEL_*", "APP_BUILD"])` passes over the names
+another library reads, where a trailing `*` matches any suffix. Strict mode needs a prefix to
+tell the variables of the configuration apart, and fails without one.
 
 ## License
 
