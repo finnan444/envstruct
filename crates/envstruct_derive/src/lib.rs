@@ -25,12 +25,82 @@ struct EnvStructInputReceiver {
     generics: syn::Generics,
     data: ast::Data<EnvStructVariantReceiver, EnvStructFieldReceiver>,
     title: Option<String>,
+    /// Variable selecting the variant of an enum whose variants carry configuration,
+    /// relative to the prefix of the enum, as in `#[env(tag = "mode")]`.
+    tag: Option<String>,
 }
 
 /// Receiver for enum variants of the `EnvStruct`.
 #[derive(Debug, FromVariant)]
+#[darling(attributes(env))]
 struct EnvStructVariantReceiver {
     ident: syn::Ident,
+    fields: ast::Fields<EnvStructFieldReceiver>,
+    name: Option<String>,
+    #[darling(default)]
+    flatten: bool,
+}
+
+impl EnvStructVariantReceiver {
+    /// The payload of a newtype variant, or `None` for a unit variant.
+    fn payload(&self) -> Option<&EnvStructFieldReceiver> {
+        self.fields.fields.first()
+    }
+
+    /// Value of the tag variable that selects this variant.
+    fn tag_value(&self) -> String {
+        self.name
+            .clone()
+            .unwrap_or_else(|| snake_case(&self.ident.to_string()))
+    }
+
+    /// Prefix the payload of this variant parses from.
+    fn payload_prefix_expr(&self) -> proc_macro2::TokenStream {
+        if self.flatten {
+            quote!(prefix)
+        } else {
+            let segment = self.tag_value();
+            quote!(::envstruct::concat_env_name(prefix, #segment))
+        }
+    }
+
+    /// Rejects variants the derive cannot express as one tag value with one payload.
+    fn validate(&self) -> Option<String> {
+        match self.fields.style {
+            ast::Style::Struct => {
+                return Some(format!(
+                    "env enum variant `{}` must be a unit or a newtype variant",
+                    self.ident
+                ))
+            }
+            ast::Style::Tuple if self.fields.fields.len() != 1 => {
+                return Some(format!(
+                    "env enum variant `{}` must hold exactly one payload",
+                    self.ident
+                ))
+            }
+            _ => {}
+        }
+
+        let payload = self.payload()?;
+        if payload.name.is_some()
+            || payload.default.is_some()
+            || payload.default_note.is_some()
+            || payload.title.is_some()
+            || payload.used_if.is_some()
+            || payload.flatten
+            || payload.inline
+            || payload.skip
+            || payload.secret
+        {
+            return Some(format!(
+                "env enum variant `{}` supports only `with` on its payload; other attributes \
+                 belong on the variant or on the payload type",
+                self.ident
+            ));
+        }
+        None
+    }
 }
 
 /// Receiver for the fields of the `EnvStruct`.
@@ -189,8 +259,31 @@ fn used_if_expr(
             env_name: #sibling_var_name,
             value: #value.to_string(),
             switch_default: #sibling_default.map(|value| value.to_string()),
+            enforced: false,
         })
     }
+}
+
+/// `RemoteBackend` becomes `remote_backend`, `HTTPProxy` becomes `http_proxy`, and an
+/// already lowercase `gcs` stays as it is.
+fn snake_case(name: &str) -> String {
+    let chars: Vec<char> = name.chars().collect();
+    let mut out = String::with_capacity(name.len());
+    for (index, ch) in chars.iter().enumerate() {
+        if ch.is_uppercase() {
+            let ends_word = index > 0 && !chars[index - 1].is_uppercase();
+            let starts_word = chars
+                .get(index + 1)
+                .is_some_and(|next| next.is_lowercase() && index > 0);
+            if ends_word || starts_word {
+                out.push('_');
+            }
+            out.extend(ch.to_lowercase());
+        } else {
+            out.push(*ch);
+        }
+    }
+    out
 }
 
 fn derive_error(span: proc_macro2::Span, message: &str) -> proc_macro2::TokenStream {
@@ -198,13 +291,45 @@ fn derive_error(span: proc_macro2::Span, message: &str) -> proc_macro2::TokenStr
 }
 
 impl EnvStructInputReceiver {
+    /// An enum is a single value parsed by its own `FromStr`, unless `tag` declares that its
+    /// variants select a configuration of their own.
+    fn enum_tokens(&self, variants: &[EnvStructVariantReceiver]) -> proc_macro2::TokenStream {
+        for variant in variants {
+            if let Some(message) = variant.validate() {
+                return derive_error(variant.ident.span(), &message);
+            }
+        }
+        match &self.tag {
+            Some(tag) => self.tagged_enum_tokens(tag, variants),
+            None => self.unit_enum_tokens(variants),
+        }
+    }
+
     /// Implements `EnvParsePrimitive` for an enum of unit variants, listing the variants as
     /// the accepted values of the variable.
-    fn enum_tokens(&self, variants: &[EnvStructVariantReceiver]) -> proc_macro2::TokenStream {
+    fn unit_enum_tokens(&self, variants: &[EnvStructVariantReceiver]) -> proc_macro2::TokenStream {
         let EnvStructInputReceiver {
             ident, generics, ..
         } = self;
         let (imp, ty, where_clause) = generics.split_for_impl();
+
+        if let Some(variant) = variants.iter().find(|variant| variant.payload().is_some()) {
+            let message = format!(
+                "env enum `{ident}` has variants with a payload and needs the variable that \
+                 selects them, as in `#[env(tag = \"mode\")]`"
+            );
+            return derive_error(variant.ident.span(), &message);
+        }
+        if let Some(variant) = variants
+            .iter()
+            .find(|variant| variant.name.is_some() || variant.flatten)
+        {
+            let message = format!(
+                "env attributes on variant `{}` need `#[env(tag = \"...\")]` on the enum",
+                variant.ident
+            );
+            return derive_error(variant.ident.span(), &message);
+        }
 
         let variant_names: Vec<String> = variants
             .iter()
@@ -228,6 +353,99 @@ impl EnvStructInputReceiver {
         }
     }
 
+    /// Implements `EnvParseNested` for an enum whose variants carry configuration: the tag
+    /// variable selects the variant, and only the selected payload is parsed.
+    fn tagged_enum_tokens(
+        &self,
+        tag: &str,
+        variants: &[EnvStructVariantReceiver],
+    ) -> proc_macro2::TokenStream {
+        let EnvStructInputReceiver {
+            ident,
+            generics,
+            title,
+            ..
+        } = self;
+        let (imp, ty, where_clause) = generics.split_for_impl();
+
+        let values: Vec<String> = variants
+            .iter()
+            .map(EnvStructVariantReceiver::tag_value)
+            .collect();
+        for (index, value) in values.iter().enumerate() {
+            if values[..index].contains(value) {
+                let message = format!("env enum value `{value}` selects more than one variant");
+                return derive_error(variants[index].ident.span(), &message);
+            }
+        }
+
+        let parse_arms = variants.iter().map(|variant| {
+            let variant_ident = &variant.ident;
+            let value = variant.tag_value();
+            match variant.payload() {
+                None => quote!(#value => Ok(Self::#variant_ident),),
+                Some(payload) => {
+                    let payload_type = payload.type_expr();
+                    let payload_prefix = variant.payload_prefix_expr();
+                    quote_spanned! { payload.ty.span() =>
+                        #value => Ok(Self::#variant_ident(
+                            #payload_type::parse_from_env_var(#payload_prefix, None)?.into(),
+                        )),
+                    }
+                }
+            }
+        });
+
+        let usage_variants = variants.iter().map(|variant| {
+            let value = variant.tag_value();
+            match variant.payload() {
+                None => quote!(::envstruct::TaggedVariant::unit(#value)),
+                Some(payload) => {
+                    let payload_type = payload.type_expr();
+                    let payload_prefix = variant.payload_prefix_expr();
+                    quote_spanned! { payload.ty.span() =>
+                        ::envstruct::TaggedVariant::payload(
+                            #value,
+                            #payload_type::get_usage_tree(#payload_prefix, None)?,
+                        )
+                    }
+                }
+            }
+        });
+
+        let enum_title = match title {
+            Some(title) => quote!(Some(#title.to_string())),
+            None => quote!(None),
+        };
+
+        quote! {
+            #[allow(clippy::useless_conversion)]
+            impl #imp ::envstruct::EnvParseNested for #ident #ty #where_clause {
+                fn parse_from_env_var(prefix: impl AsRef<str>, default: Option<&str>) -> std::result::Result<Self, ::envstruct::EnvStructError> {
+                    let prefix = prefix.as_ref();
+                    let tag = ::envstruct::EnumTag::read(
+                        ::envstruct::concat_env_name(prefix, #tag),
+                        default,
+                    )?;
+                    match tag.value.as_str() {
+                        #( #parse_arms )*
+                        _ => Err(tag.unknown_value_error(&[#( #values, )*])),
+                    }
+                }
+
+                fn get_usage_tree(prefix: impl AsRef<str>, default: Option<&str>) -> std::result::Result<::envstruct::UsageTree, ::envstruct::EnvStructError> {
+                    let prefix = prefix.as_ref();
+                    Ok(::envstruct::tagged_enum_usage(
+                        ::envstruct::concat_env_name(prefix, #tag),
+                        default,
+                        #enum_title,
+                        vec![#( #usage_variants, )*],
+                    ))
+                }
+            }
+        }
+    }
+
     /// Implements `EnvParseNested` for a struct: every field parses from its own variable.
     fn struct_tokens(
         &self,
@@ -240,6 +458,11 @@ impl EnvStructInputReceiver {
             ..
         } = self;
         let (imp, ty, where_clause) = generics.split_for_impl();
+
+        if self.tag.is_some() {
+            let message = format!("env `tag` applies to an enum, not to struct `{ident}`");
+            return derive_error(ident.span(), &message);
+        }
 
         if let Some(field) = fields
             .iter()
@@ -354,4 +577,13 @@ impl ToTokens for EnvStructInputReceiver {
 
         tokens.extend(impl_block);
     }
+}
+
+#[test]
+fn test_snake_case() {
+    assert_eq!(snake_case("Local"), "local");
+    assert_eq!(snake_case("RemoteBackend"), "remote_backend");
+    assert_eq!(snake_case("HTTPProxy"), "http_proxy");
+    assert_eq!(snake_case("gcs"), "gcs");
+    assert_eq!(snake_case("Mode2"), "mode2");
 }

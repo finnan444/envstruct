@@ -1,0 +1,5 @@
+error: env enum variant `Remote` must be a unit or a newtype variant
+ --> tests/compiletest/tagged_enum_struct_variant.rs:7:5
+  |
+7 |     Remote { dsn: String },
+  |     ^^^^^^

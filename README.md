@@ -88,8 +88,61 @@ fn main() -> Result<(), envstruct::EnvStructError> {
 - `skip`: Do not parse or document the field.
 - `secret`: Mark the variable as a secret in usage output (`(secret)` after the name). Parsing is unchanged.
 - `default_note`: Runtime-computed default shown in the DEFAULT column in parentheses, as in `#[env(default_note = "physical CPU count")]`. Cannot be combined with `default`.
+- `tag`: On an enum, the variable that selects the variant, as in `#[env(tag = "mode")]`. On a variant of such an enum, `name` renames the value that selects it and `flatten` drops its segment from the names of its payload.
 
 DEFAULT is a quoted literal, a note in parentheses for a runtime default, `none` when an optional variable may be omitted, or `<required>` when a required variable has no default. A required field with `default_note` shows `<required> (note)` because the note does not supply a parser default.
+
+## Enums with data
+
+An enum without `tag` stays a single value parsed by its own `FromStr`. With `tag`, the variants carry their own configuration: the tag variable selects one variant, only its payload is parsed, and the help states the condition of every group by itself.
+
+Before, the mode and the configuration it selects are two declarations. Nothing links them, so the link is repeated by hand in `used_if`, and the group has to be optional to keep the other mode parsable:
+
+```rust
+#[derive(EnvStruct, Debug)]
+pub struct DeployConfig {
+    #[env(default = "local")]
+    pub mode: Mode,
+
+    #[env(title = "Remote", used_if = "mode=remote")]
+    pub remote: Option<RemoteConfig>,
+}
+```
+
+After, the link lives in the type:
+
+```rust
+#[derive(EnvStruct, Debug)]
+#[env(tag = "mode")]
+pub enum Backend {
+    Local,
+    Remote(RemoteConfig),
+}
+
+#[derive(EnvStruct, Debug)]
+pub struct DeployConfig {
+    #[env(flatten, default = "local")]
+    pub backend: Backend,
+}
+```
+
+With the prefix `DEPLOY`, `DEPLOY_MODE` selects the variant:
+
+```text
+VARIABLE             | TYPE                | DEFAULT
+---------------------+---------------------+-----------
+DEPLOY_MODE          | enum: local, remote | "local"
+[DEPLOY_MODE=remote]
+  DEPLOY_REMOTE_DSN  | string              | <required>
+```
+
+- A bracketed condition heads the variables of a variant, and a variant without variables of its own is not listed.
+- A variant is a unit variant or a newtype variant holding one configuration; other shapes are rejected at compile time.
+- The value selecting a variant is its name in snake case (`Remote` becomes `remote`), or `#[env(name = "...")]`.
+- The payload of `Remote` parses from `DEPLOY_REMOTE_`; `#[env(flatten)]` on the variant parses it from `DEPLOY_` instead. Both the parser and the help use the same names.
+- The payload keeps its own required fields and defaults; variables of the variants that are not selected are never parsed.
+- The default variant is the default of the field holding the enum, as for any other value. Without one, a missing tag variable is a missing required variable.
+- An unknown value names the values that would work.
 
 ## License
 

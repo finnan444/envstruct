@@ -1,0 +1,5 @@
+error: env `tag` applies to an enum, not to struct `Config`
+ --> tests/compiletest/tag_on_struct.rs:5:12
+  |
+5 | pub struct Config {
+  |            ^^^^^^

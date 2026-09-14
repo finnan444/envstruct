@@ -1,0 +1,5 @@
+error: env enum `Backend` has variants with a payload and needs the variable that selects them, as in `#[env(tag = "mode")]`
+  --> tests/compiletest/tagged_enum_payload_without_tag.rs:10:5
+   |
+10 |     Remote(RemoteConfig),
+   |     ^^^^^^

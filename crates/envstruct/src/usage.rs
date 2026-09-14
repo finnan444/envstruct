@@ -135,6 +135,9 @@ pub struct UsageUsedIf {
     pub env_name: String,
     pub value: String,
     pub switch_default: Option<String>,
+    /// Whether the parser itself selects the group by this condition. A `used_if` condition
+    /// is application usage and stays `false`; the tag of an enum with data sets it.
+    pub enforced: bool,
 }
 
 /// Usage metadata for a config type.
@@ -247,6 +250,88 @@ fn apply_usage_flags(items: &mut [UsageItem], secret: bool, default_note: Option
                 apply_usage_flags(&mut group.items, secret, default_note);
             }
         }
+    }
+}
+
+/// One variant of an enum selected by a tag variable, as it appears in usage output.
+pub struct TaggedVariant {
+    value: String,
+    tree: Option<UsageTree>,
+}
+
+impl TaggedVariant {
+    /// A variant that needs no variables of its own.
+    pub fn unit(value: impl Into<String>) -> Self {
+        Self {
+            value: value.into(),
+            tree: None,
+        }
+    }
+
+    /// A variant whose payload parses from its own group of variables.
+    pub fn payload(value: impl Into<String>, tree: UsageTree) -> Self {
+        Self {
+            value: value.into(),
+            tree: Some(tree),
+        }
+    }
+}
+
+/// Usage tree of an enum whose variants carry configuration: the tag variable that selects
+/// the variant, then one group per variant conditioned on the value that selects it.
+pub fn tagged_enum_usage(
+    tag_var: String,
+    default: Option<&str>,
+    title: Option<String>,
+    variants: Vec<TaggedVariant>,
+) -> UsageTree {
+    let values = variants
+        .iter()
+        .map(|variant| variant.value.clone())
+        .collect();
+    let mut items = vec![UsageItem::Field(UsageField {
+        name: tag_var.clone(),
+        description: None,
+        typ: UsageType::Enum,
+        required: default.is_none(),
+        default: default.map(str::to_string),
+        values: Some(values),
+        secret: false,
+        default_note: None,
+    })];
+
+    for variant in variants {
+        let used_if = UsageUsedIf {
+            env_name: tag_var.clone(),
+            value: variant.value.clone(),
+            switch_default: default.map(str::to_string),
+            enforced: true,
+        };
+        let group = match variant.tree {
+            Some(tree) => UsageGroup {
+                description: None,
+                inline: false,
+                title: tree.title.unwrap_or_else(|| fallback_title(&variant.value)),
+                optional: tree.kind == UsageTreeKind::OptionalStruct,
+                used_if: Some(used_if),
+                items: tree.items,
+            },
+            None => UsageGroup {
+                description: None,
+                inline: false,
+                title: fallback_title(&variant.value),
+                optional: false,
+                used_if: Some(used_if),
+                items: Vec::new(),
+            },
+        };
+        items.push(UsageItem::Group(group));
+    }
+
+    UsageTree {
+        title,
+        kind: UsageTreeKind::Struct,
+        items,
     }
 }
 
@@ -478,7 +563,13 @@ fn section_marker(group: &UsageGroup, path: &str) -> String {
     let Some(used_if) = &group.used_if else {
         return format!("[{path}]");
     };
-    let mut cond = format!("used when {}={}", used_if.env_name, used_if.value);
+    // The parser selects the group by the tag, so the condition alone reads as the heading;
+    // a `used_if` condition is application usage and says so.
+    let mut cond = if used_if.enforced {
+        format!("{}={}", used_if.env_name, used_if.value)
+    } else {
+        format!("used when {}={}", used_if.env_name, used_if.value)
+    };
     if used_if.switch_default.as_deref() == Some(used_if.value.as_str()) {
         cond.push_str(" (default)");
     }

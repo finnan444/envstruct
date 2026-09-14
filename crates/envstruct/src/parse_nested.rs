@@ -113,6 +113,68 @@ impl<T: EnvParseNested> EnvParseNested for Option<T> {
     }
 }
 
+/// Value of the variable that selects the variant of an enum with data.
+///
+/// The derive macro reads the tag once, matches it against the declared variants, and asks
+/// for this error when no variant matches.
+pub struct EnumTag {
+    /// Name of the variable the value came from.
+    pub var_name: String,
+    /// Trimmed value selecting the variant.
+    pub value: String,
+    from_default: bool,
+}
+
+impl EnumTag {
+    /// Reads the tag from the environment, falling back to the default of the field.
+    ///
+    /// # Errors
+    ///
+    /// Returns `MissingEnvVar` when the variable is absent and the field has no default.
+    pub fn read(var_name: String, default: Option<&str>) -> Result<Self, EnvStructError> {
+        let value = match std::env::var(&var_name) {
+            Ok(value) => value,
+            Err(std::env::VarError::NotUnicode(_)) => {
+                return Err(EnvStructError::InvalidVarFormat(var_name))
+            }
+            Err(std::env::VarError::NotPresent) => match default {
+                Some(default) => {
+                    return Ok(Self {
+                        var_name,
+                        value: default.trim().to_string(),
+                        from_default: true,
+                    })
+                }
+                None => return Err(EnvStructError::MissingEnvVar(var_name)),
+            },
+        };
+        Ok(Self {
+            var_name,
+            value: value.trim().to_string(),
+            from_default: false,
+        })
+    }
+
+    /// Error for a value that matches no variant, naming the values that do.
+    pub fn unknown_value_error(&self, values: &[&str]) -> EnvStructError {
+        let source: BoxError = format!("expected one of: {}", values.join(", ")).into();
+        let (var_name, var_value) = (self.var_name.clone(), self.value.clone());
+        if self.from_default {
+            EnvStructError::ParseDefaultError {
+                var_name,
+                var_value,
+                source,
+            }
+        } else {
+            EnvStructError::ParseEnvError {
+                var_name,
+                var_value,
+                source,
+            }
+        }
+    }
+}
+
 /// Concatenates two environment variable names with an underscore.
 ///
 /// # Arguments
