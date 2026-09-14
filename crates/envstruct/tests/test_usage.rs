@@ -699,8 +699,6 @@ fn usage_snapshot_groups_and_conditions() {
         &usage,
         r#"Environment variables
 
-Byte sizes accept values such as 4MB and 10MiB.
-
 VARIABLE                                | TYPE                   | DEFAULT
 ----------------------------------------+------------------------+----------------
 AVATARDB_IMAGE_SIZE_LIMIT               | bytesize               | "4MB"
@@ -870,7 +868,6 @@ fn wide_integer_reports_no_bounds() {
     assert!(usage.contains("i64"));
     assert!(!usage.contains("integer"));
     assert!(!usage.contains("..="));
-    assert!(!usage.contains("Integer ranges"));
 }
 
 #[test]
@@ -928,8 +925,6 @@ fn numeric_usage_prints_the_rust_type() {
     let usage = Config::usage_with_prefix("TEST").unwrap();
     assert!(!usage.contains("integer"));
     assert!(!usage.contains("float"));
-    assert!(usage.contains("Seconds accept a plain number, for example 30, not 30s."));
-    assert!(usage.contains("Durations accept values such as 15s, 10m, and 24h."));
 }
 
 #[test]
@@ -1140,8 +1135,6 @@ fn usage_snapshot_secret_default_note_and_none() {
     insta_like_eq(
         &usage,
         r#"Environment variables
-
-Integer ranges are inclusive bounds; a value outside them fails to parse.
 
 VARIABLE         | TYPE            | DEFAULT
 -----------------+-----------------+---------------------

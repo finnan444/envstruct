@@ -3,7 +3,7 @@
 use envstruct::prelude::*;
 
 #[test]
-fn field_docs_preserve_markdown_and_stay_with_the_assignment() {
+fn field_docs_stay_in_the_tree_and_out_of_the_example() {
     #[rustfmt::skip]
     #[derive(EnvStruct)]
     struct Config {
@@ -27,12 +27,13 @@ fn field_docs_preserve_markdown_and_stay_with_the_assignment() {
         panic!("expected a field")
     };
     assert_eq!(field.description.as_deref(), Some("How long a session stays valid without a refresh.\n\n- Use `24h` for a day.\n  See [sessions](https://example.com/sessions)."));
-    assert_eq!(tree.to_env_example(), "# How long a session stays valid without a refresh.\n#\n# - Use `24h` for a day.\n#   See [sessions](https://example.com/sessions).\n# ACCOUNT_SESSION_REFRESH_TTL=24h\nACCOUNT_SESSION_UNDOCUMENTED=\n# Never expose this token.\n# ACCOUNT_SESSION_TOKEN=\n");
+    // Only the variable without a default is left to fill in; the docs belong to the table.
+    assert_eq!(tree.to_env_example(), "ACCOUNT_SESSION_UNDOCUMENTED=\n");
     assert!(!Config::usage().unwrap().contains("How long"));
 }
 
 #[test]
-fn group_description_replaces_title_with_undocumented_title_as_fallback() {
+fn a_group_contributes_only_the_variables_that_need_a_value() {
     #[derive(EnvStruct)]
     struct Database {
         dsn: String,
@@ -47,11 +48,11 @@ fn group_description_replaces_title_with_undocumented_title_as_fallback() {
     }
 
     let example = Config::get_usage_tree("", None).unwrap().to_env_example();
-    assert_eq!(example, "# Player database, read to enrich a ticket with game info.\nDATADB_DSN=\n\n# Optional archive database.\n# ARCHIVE_DSN=\n\n# Fallback\nFALLBACK_DSN=\n\n");
+    assert_eq!(example, "DATADB_DSN=\n# ARCHIVE_DSN=\nFALLBACK_DSN=\n");
 }
 
 #[test]
-fn inactive_groups_keep_their_own_and_their_child_descriptions() {
+fn an_inactive_branch_is_headed_by_the_assignment_that_enables_it() {
     #[derive(EnvStruct)]
     struct Remote {
         /// Connection string for the remote store.
@@ -74,11 +75,14 @@ fn inactive_groups_keep_their_own_and_their_child_descriptions() {
         group.description.as_deref(),
         Some("Configure this store when local storage is unavailable.")
     );
-    assert_eq!(tree.to_env_example(), "# STORE_MODE=local\n\n# Configure this store when local storage is unavailable.\n# used when STORE_MODE=remote\n# Connection string for the remote store.\n# STORE_REMOTE_DSN=\n\n");
+    assert_eq!(
+        tree.to_env_example(),
+        "# STORE_MODE=remote\n# STORE_REMOTE_DSN=\n"
+    );
 }
 
 #[test]
-fn docs_on_flattened_and_inline_fields_do_not_change_the_short_table() {
+fn docs_on_flattened_and_inline_fields_change_neither_the_table_nor_the_example() {
     #[derive(EnvStruct)]
     struct Inner {
         /// Public listener address.
@@ -109,15 +113,16 @@ fn docs_on_flattened_and_inline_fields_do_not_change_the_short_table() {
     let example = Documented::get_usage_tree("APP", None)
         .unwrap()
         .to_env_example();
-    assert!(
-        example.starts_with("# Public API configuration.\n# Public listener address.\nAPP_ADDR=\n")
+    assert_eq!(
+        example,
+        Undocumented::get_usage_tree("APP", None)
+            .unwrap()
+            .to_env_example()
     );
-    assert!(example.contains(
-        "# Administrative API configuration.\n# Public listener address.\nAPP_ADMIN_ADDR=\n"
-    ));
-    assert_eq!(example.matches("# Public API configuration.").count(), 1);
-    assert!(!example.contains("# Public\n"));
-    assert!(!example.contains("# Admin\n"));
+    assert_eq!(
+        example,
+        "APP_ADDR=\n\n# APP_MODE=remote\n# APP_REMOTE_DSN=\n\nAPP_ADMIN_ADDR=\n\n# APP_ADMIN_MODE=remote\n# APP_ADMIN_REMOTE_DSN=\n"
+    );
 }
 
 #[derive(EnvStruct)]
@@ -128,7 +133,7 @@ struct Credentials {
 }
 
 #[test]
-fn placeholders_distinguish_required_optional_and_secret_values() {
+fn only_the_variables_without_a_default_are_written_including_secrets() {
     #[derive(EnvStruct)]
     struct Config {
         port: u16,
@@ -146,7 +151,7 @@ fn placeholders_distinguish_required_optional_and_secret_values() {
     let example = Config::get_usage_tree("APP", None)
         .unwrap()
         .to_env_example();
-    assert_eq!(example, "APP_PORT=\n# APP_SHUTDOWN_TIMEOUT=30s\n# APP_LABEL=\n# APP_TOKEN=\nAPP_PASSWORD=\n\n# Database\nAPP_DATABASE_DSN=\n# APP_DATABASE_TIMEOUT=\n\n");
+    assert_eq!(example, "APP_PORT=\nAPP_PASSWORD=\nAPP_DATABASE_DSN=\n");
 }
 
 #[test]
@@ -164,7 +169,10 @@ fn only_default_branch_is_enabled_even_for_optional_used_if_groups() {
     let example = Config::get_usage_tree("STORE", None)
         .unwrap()
         .to_env_example();
-    assert_eq!(example, "# STORE_MODE=local\n\n# used when STORE_MODE=local\nSTORE_LOCAL_DSN=\n# STORE_LOCAL_TIMEOUT=30s\n\n# used when STORE_MODE=remote\n# STORE_REMOTE_DSN=\n# STORE_REMOTE_TIMEOUT=30s\n\n");
+    assert_eq!(
+        example,
+        "# STORE_MODE=local\nSTORE_LOCAL_DSN=\n\n# STORE_MODE=remote\n# STORE_REMOTE_DSN=\n"
+    );
 }
 
 #[derive(EnvStruct)]
@@ -175,7 +183,7 @@ enum Backend {
 }
 
 #[test]
-fn empty_groups_do_not_leave_orphaned_conditions_or_descriptions() {
+fn empty_groups_do_not_leave_orphaned_conditions() {
     #[derive(EnvStruct)]
     struct Empty {}
 
@@ -202,7 +210,7 @@ fn empty_groups_do_not_leave_orphaned_conditions_or_descriptions() {
     let example = Config::get_usage_tree("APP", None)
         .unwrap()
         .to_env_example();
-    assert_eq!(example, "# APP_ENABLED=false\n# APP_MODE=mock\n\n# used when APP_MODE=remote\n# APP_REMOTE_DSN=\n# APP_REMOTE_TIMEOUT=30s\n\n");
+    assert_eq!(example, "# APP_MODE=remote\n# APP_REMOTE_DSN=\n");
 }
 
 #[test]
@@ -210,7 +218,10 @@ fn missing_switch_default_does_not_choose_a_branch() {
     let example = Backend::get_usage_tree("STORE", None)
         .unwrap()
         .to_env_example();
-    assert_eq!(example, "STORE_MODE=\n\n# used when STORE_MODE=local\n# STORE_LOCAL_DSN=\n# STORE_LOCAL_TIMEOUT=30s\n\n# used when STORE_MODE=remote\n# STORE_REMOTE_DSN=\n# STORE_REMOTE_TIMEOUT=30s\n\n");
+    assert_eq!(
+        example,
+        "STORE_MODE=\n\n# STORE_MODE=local\n# STORE_LOCAL_DSN=\n\n# STORE_MODE=remote\n# STORE_REMOTE_DSN=\n"
+    );
 }
 
 #[test]
@@ -262,17 +273,19 @@ fn optional_groups_are_not_enabled_by_required_children() {
 }
 
 #[test]
-fn multiline_defaults_cannot_inject_active_assignments() {
-    let tree = UsageTree::leaf_field(
-        "APP_TEXT",
-        UsageType::String,
-        false,
-        Some("hello # \"world\"\nINJECTED=yes\r\n$HOME\\path".to_string()),
-        None,
-    );
+fn multiline_examples_cannot_inject_active_assignments() {
+    #[derive(EnvStruct)]
+    struct Config {
+        #[env(example = "hello # \"world\"\nINJECTED=yes\r\n$HOME\\path")]
+        text: String,
+    }
+
+    let example = Config::get_usage_tree("APP", None)
+        .unwrap()
+        .to_env_example();
     assert_eq!(
-        tree.to_env_example(),
-        "# APP_TEXT=\"hello # \\\"world\\\"\\nINJECTED=yes\\r\\n\\$HOME\\\\path\"\n"
+        example,
+        "APP_TEXT=\"hello # \\\"world\\\"\\nINJECTED=yes\\r\\n\\$HOME\\\\path\"\n"
     );
 }
 
@@ -300,7 +313,19 @@ fn examples_fill_variables_that_have_no_default_including_secrets() {
     let tree = Config::get_usage_tree("APP", None).unwrap();
     assert_eq!(
         tree.to_env_example(),
-        "# Where the players are stored.\nAPP_DSN=postgres://user:pass@localhost/app\n# Rotating it logs everyone out.\nAPP_GCM_SECRET=0123456789abcdef\n# APP_WEBHOOK=https://example.com/hook\n\n# An example belongs to one variable, so a struct field cannot carry it.\nAPP_NESTED_DSN=\n\n"
+        "APP_DSN=postgres://user:pass@localhost/app\nAPP_GCM_SECRET=0123456789abcdef\nAPP_NESTED_DSN=\n"
     );
-    assert!(!Config::usage().unwrap().contains("postgres://"));
+    // The same examples fill the EXAMPLE column of the usage table.
+    assert_eq!(
+        Config::usage().unwrap(),
+        r#"Environment variables
+
+VARIABLE            | TYPE   | DEFAULT    | EXAMPLE
+--------------------+--------+------------+-----------------------------------
+DSN                 | string | <required> | postgres://user:pass@localhost/app
+GCM_SECRET (secret) | string | <required> | 0123456789abcdef
+NESTED_DSN          | string | <required> |
+WEBHOOK             | string | none       | https://example.com/hook
+"#
+    );
 }

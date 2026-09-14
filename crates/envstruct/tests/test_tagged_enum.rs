@@ -333,9 +333,6 @@ fn usage_snapshot_of_an_enum_with_data() {
     let usage = DoomConfig::usage_with_prefix("DOOM").unwrap();
     let expected = r#"Environment variables
 
-Durations accept values such as 15s, 10m, and 24h.
-A bracketed condition, such as [MODE=local], applies to the variables listed under it.
-
 VARIABLE                 | TYPE                | DEFAULT
 -------------------------+---------------------+-----------
 DOOM_RELOAD_DELAY        | duration            | "60s"
